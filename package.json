@@ -1,0 +1,87 @@
+{
+  "name": "oceanum",
+  "displayName": "Oceanum",
+  "description": "Oceanum.io platform integration",
+  "icon": "images/logo_grey.png",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:oceanum.datamesh"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Oceanum",
+      "properties": {
+        "oceanum.token": {
+          "type": "string",
+          "default": "d48f45853628a554df49a86a80a4cff72825855c",
+          "markdownDescription": "Oceanum token [Get your token here](https://home.oceanum.io/account)"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "oceanum.datamesh",
+        "title": "Oceanum Datamesh"
+      },
+      {
+        "command": "oceanum.setToken",
+        "title": "Oceanum Token"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "id": "datamesh-welcome",
+        "title": "Datamesh",
+        "view": "datamesh-datasources",
+        "icon": "images/logo_grey.png",
+        "contents": "In order to insert datasources from Oceanum Datamesh in your code, you select from the Datamesh UI.\n[Open Datamesh UI](command:oceanum.datamesh)\n[Set your token](command:oceanum.setToken)\nTo learn more about how to use Datamesh in VS Code [read our docs](https://docs.oceanum.tech/datamesh/integrations.html).",
+        "when": "true"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "datamesh-connect",
+          "title": "Datamesh",
+          "icon": "images/logo_grey.png"
+        }
+      ]
+    },
+    "views": {
+      "datamesh-connect": [
+        {
+          "id": "datamesh-datasources",
+          "name": "Datasources"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.70.0",
+    "@types/glob": "^7.2.0",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "16.x",
+    "@typescript-eslint/eslint-plugin": "^5.31.0",
+    "@typescript-eslint/parser": "^5.31.0",
+    "eslint": "^8.20.0",
+    "glob": "^8.0.3",
+    "mocha": "^10.0.0",
+    "typescript": "^4.7.4",
+    "@vscode/test-electron": "^2.1.5"
+  }
+}
