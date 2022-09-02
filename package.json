@@ -1,9 +1,11 @@
 {
   "name": "oceanum",
   "displayName": "Oceanum",
+  "publisher": "oceanum",
   "description": "Oceanum.io platform integration",
   "icon": "images/logo_grey.png",
   "version": "0.0.1",
+  "repository": "https://github.com/oceanum-io/oceanum-vscode",
   "engines": {
     "vscode": "^1.70.0"
   },
