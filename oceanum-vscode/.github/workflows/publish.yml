@@ -1,0 +1,47 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      pre_release:
+        description: 'Publish as pre-release'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run vscode:prepublish
+
+      - name: Publish to VS Code Marketplace
+        run: |
+          if [ "${{ inputs.pre_release }}" = "true" ]; then
+            npx @vscode/vsce publish --pre-release
+          else
+            npx @vscode/vsce publish
+          fi
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX Registry
+        run: npx ovsx publish --pat ${{ secrets.OVSX_PAT }}
+        continue-on-error: true  # Don't fail the workflow if Open VSX publish fails

@@ -1,0 +1,14 @@
+.vscode/**
+.github/**
+src/**
+webview-src/**
+node_modules/**
+out/**.js.map
+esbuild.*.js
+tsconfig*.json
+vitest.config.ts
+*.test.ts
+.eslintrc.json
+.gitignore
+yarn.lock
+package-lock.json
