@@ -3,12 +3,16 @@
 src/**
 webview-src/**
 node_modules/**
-out/**.js.map
+out/**/*.map
+out/test/**
 esbuild.*.js
 tsconfig*.json
 vitest.config.ts
 *.test.ts
 .eslintrc.json
 .gitignore
+.env*
+.pytest_cache/**
 yarn.lock
 package-lock.json
+vsc-extension-quickstart.md

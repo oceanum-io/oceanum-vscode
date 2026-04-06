@@ -54,7 +54,7 @@ describe("generateDatasourceCode", () => {
     };
     const code = generateDatasourceCode(ds, false);
     expect(code).toContain("datamesh.query(");
-    expect(code).toContain("times: ['2020-01-01', '2021-01-01']");
+    expect(code).toContain("'times': ['2020-01-01', '2021-01-01']");
   });
 
   it("generates a query call when geofilter is present", () => {
@@ -65,7 +65,7 @@ describe("generateDatasourceCode", () => {
     const code = generateDatasourceCode(ds, false);
     expect(code).toContain("datamesh.query(");
     expect(code).toContain("'type': 'Point'");
-    expect(code).toContain("'coordinates': [170.5, -45.0]");
+    expect(code).toContain("'coordinates': [170.5, -45]");
   });
 
   it("generates a query call when spatialref is present", () => {

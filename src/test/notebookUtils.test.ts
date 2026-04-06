@@ -1,10 +1,14 @@
 // Copyright Oceanum Ltd. Apache 2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock the vscode module before importing the module under test
-const mockApplyEdit = vi.fn().mockResolvedValue(true);
-const mockWriteText = vi.fn().mockResolvedValue(undefined);
-const mockShowInformationMessage = vi.fn();
+// vi.mock is hoisted above imports, so mock variables must use vi.hoisted()
+const { mockApplyEdit, mockWriteText, mockShowInformationMessage } = vi.hoisted(
+  () => ({
+    mockApplyEdit: vi.fn().mockResolvedValue(true),
+    mockWriteText: vi.fn().mockResolvedValue(undefined),
+    mockShowInformationMessage: vi.fn(),
+  }),
+);
 
 const mockNotebookEditor = {
   notebook: {
