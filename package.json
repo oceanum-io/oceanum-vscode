@@ -41,7 +41,7 @@
       {
         "id": "datamesh-welcome",
         "title": "Datamesh",
-        "view": "datamesh-datasources",
+        "view": "datamesh-connect",
         "icon": "images/logo_grey.png",
         "contents": "In order to insert datasources from Oceanum Datamesh in your code, you select from the Datamesh UI.\n[Open Datamesh UI](command:oceanum.datamesh)\n[Set your token](command:oceanum.setToken)\nTo learn more about how to use Datamesh in VS Code [read our docs](https://docs.oceanum.tech/datamesh/integrations.html).",
         "when": "true"
@@ -60,6 +60,12 @@
       "datamesh-connect": [
         {
           "id": "datamesh-datasources",
+          "name": "Datamesh connect"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "datasource-list",
           "name": "Datasources"
         }
       ]

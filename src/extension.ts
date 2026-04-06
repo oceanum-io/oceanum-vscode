@@ -7,6 +7,9 @@ import * as vscode from "vscode";
 export function activate(context: vscode.ExtensionContext) {
   // Use the console to output diagnostic information (console.log) and errors (console.error)
   // This line of code will only be executed once when your extension is activated
+  if (!context.workspaceState.datasources) {
+    context.workspaceState.datasources = [];
+  }
   console.log("Oceanum extension active");
 
   // The command has been defined in the package.json file
@@ -25,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
     panel.webview.onDidReceiveMessage(
       (message) => {
         console.log(message);
+        if (message.action && message.action === "datasource-select") {
+          context.workspaceState.datasources.push(message.data);
+        }
       },
       undefined,
       context.subscriptions
@@ -40,6 +46,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(datamesh);
   context.subscriptions.push(settings);
+
+  vscode.window.createTreeView("datasource-list", {
+    treeDataProvider: new DatasourceProvider(
+      context.workspaceState.datasources
+    ),
+  });
 }
 
 // this method is called when your extension is deactivated
