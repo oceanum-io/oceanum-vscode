@@ -97,7 +97,7 @@ npm run watch
 
 Two bundles are produced:
 
-| Bundle | Entry | Output | Purpose |
+| Bundle | Entry | Output | Purpose |npm run compile
 |---|---|---|---|
 | Extension host | `src/extension.ts` | `out/extension.js` | Node.js, CommonJS |
 | Sidebar webview | `webview-src/index.tsx` | `out/sidebar.js` | Browser, IIFE |

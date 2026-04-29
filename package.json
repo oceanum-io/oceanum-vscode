@@ -2,7 +2,7 @@
   "name": "oceanum-vscode",
   "displayName": "Oceanum",
   "description": "Oceanum Datamesh and AI integration for VS Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "oceanum",
   "engines": {
     "vscode": "^1.80.0"
@@ -30,6 +30,21 @@
           "type": "boolean",
           "description": "Inject the Datamesh token into generated connector code",
           "default": false
+        },
+        "oceanum.auth0Domain": {
+          "type": "string",
+          "description": "Auth0 domain for Oceanum login (e.g. oceanum.au.auth0.com)",
+          "default": ""
+        },
+        "oceanum.auth0ClientId": {
+          "type": "string",
+          "description": "Auth0 client ID for Oceanum login",
+          "default": ""
+        },
+        "oceanum.auth0Audience": {
+          "type": "string",
+          "description": "Auth0 API audience identifier (required for tokens that call Datamesh APIs)",
+          "default": ""
         }
       }
     },
@@ -42,6 +57,14 @@
       {
         "command": "oceanum.setToken",
         "title": "Oceanum: Configure Token"
+      },
+      {
+        "command": "oceanum.login",
+        "title": "Oceanum: Sign In"
+      },
+      {
+        "command": "oceanum.signOut",
+        "title": "Oceanum: Sign Out"
       }
     ],
     "viewsContainers": {
@@ -49,7 +72,7 @@
         {
           "id": "oceanum-sidebar",
           "title": "Oceanum",
-          "icon": "images/oceanum-icon-24.png"
+          "icon": "images/oceanum-icon.svg"
         }
       ]
     },
