@@ -13,7 +13,7 @@ The Oceanum panel in the Activity Bar shows your current Datamesh workspace — 
 
 ### Datamesh UI
 
-Open the full Datamesh browser (`Oceanum: Open Datamesh UI` command or the `+` button in the sidebar) to search and filter the entire Datamesh catalogue. Selecting a workspace in the UI automatically populates the sidebar datasource list.
+Open the full Datamesh browser (`Oceanum: Open Datamesh UI` command or the `+` button in the sidebar) to search and filter the entire Datamesh catalogue. Selecting a workspace in the UI automatically populates the sidebar datasource list. You can then drag the Datamesh queries into your notebook to autogenerate the code to run the query.
 
 ### Generated Code
 
@@ -38,14 +38,14 @@ my_dataset = datamesh.query(
 )
 ```
 
-### Oceanum AI Chat
+### Oceanum AI Chat (enabled accounts only)
 
 The AI panel at the bottom of the sidebar lets you ask natural-language questions about Datamesh data. The AI reads your current notebook cells as context and inserts generated code directly into the active cell.
 
 ## Requirements
 
 - VS Code 1.80 or later
-- A [Datamesh API token](https://home.oceanum.io/account) (free account required)
+- A [Datamesh API token](https://home.oceanum.io/account) (account required)
 - Python with `oceanum` installed (`pip install oceanum`) to run generated code
 
 ## Configuration
