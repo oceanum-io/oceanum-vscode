@@ -43,6 +43,28 @@ export async function requestDeviceCode(params: {
   return response.json() as Promise<DeviceCodeResponse>;
 }
 
+export async function refreshAccessToken(params: {
+  domain: string;
+  clientId: string;
+  refreshToken: string;
+}): Promise<DeviceTokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: params.clientId,
+    refresh_token: params.refreshToken,
+  });
+  const response = await fetch(`https://${params.domain}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Token refresh failed (${response.status}): ${text}`);
+  }
+  return response.json() as Promise<DeviceTokenResponse>;
+}
+
 interface PollOptions {
   domain: string;
   clientId: string;
