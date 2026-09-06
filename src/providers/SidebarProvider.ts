@@ -175,7 +175,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
         return;
       }
-      response = (await res.json()) as OceanumResponse;
+      const body = (await res.json()) as Partial<OceanumResponse> | null;
+      // Checked rather than cast. The cast was safe only while the contract
+      // never changed; it has (OCE-173), and an extension meeting a backend on
+      // the other side of that change would read `blocks` off a body with none,
+      // throwing below so the user sees nothing happen at all.
+      if (
+        !body ||
+        typeof body.message !== "string" ||
+        !Array.isArray(body.blocks)
+      ) {
+        this._post({
+          command: "chat-error",
+          message:
+            "Unexpected response from Oceanum AI. It may be running an " +
+            "incompatible version of the chat API.",
+        });
+        return;
+      }
+      response = { message: body.message, blocks: body.blocks };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this._post({
@@ -187,10 +205,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this._post({ command: "chat-response", response });
 
-    if (response.type === "code") {
-      await insertContent(response.code, "code");
-    } else if (response.type === "markdown") {
-      await insertContent(response.content, "markdown");
+    // Every block, in the order the agent wrote them. This was a branch over
+    // the response type, because a response was exactly one of text, code or
+    // markdown; it can now carry any number of blocks in any combination, and
+    // `insertContent` already takes exactly a block's shape.
+    for (const block of response.blocks) {
+      await insertContent(block.content, block.type);
     }
   }
 
