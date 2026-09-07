@@ -1,31 +1,8 @@
 // Copyright Oceanum Ltd. Apache 2.0
 import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
-import type {
-  ChatMessage,
-  ExtToWebviewMessage,
-  OceanumResponse,
-} from "../types";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  code?: string;
-}
-
-function responseToMessage(response: OceanumResponse): Message {
-  if (response.type === "code") {
-    return {
-      role: "assistant",
-      content: response.message,
-      code: response.code,
-    };
-  }
-  if (response.type === "markdown") {
-    return { role: "assistant", content: response.message ?? response.content };
-  }
-  return { role: "assistant", content: response.message };
-}
+import type { ChatMessage, ExtToWebviewMessage } from "../types";
+import { type Message, responseToMessage } from "../responseToMessage";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);

@@ -19,10 +19,27 @@ export interface IWorkspaceSpec {
   data: IDatasource[];
 }
 
-export type OceanumResponse =
-  | { type: "text"; message: string }
-  | { type: "code"; message: string; code: string }
-  | { type: "markdown"; content: string; message?: string };
+/** One thing the backend asks us to place in the editor. */
+export interface Block {
+  type: "code" | "markdown";
+  content: string;
+}
+
+/**
+ * What `/api/chat` answers with: one message, plus anything to place.
+ *
+ * This replaced a discriminated union of text/code/markdown responses
+ * (OCE-173). The union was exclusive, so the backend could not send a markdown
+ * table describing a dataset AND the query that produced it -- it had to drop
+ * one half. `message` is what goes in the chat panel; `blocks` is what goes in
+ * the notebook or editor, in order.
+ *
+ * `message` is always present now; on the old markdown variant it was optional.
+ */
+export interface OceanumResponse {
+  message: string;
+  blocks: Block[];
+}
 
 export interface ChatMessage {
   role: "user" | "assistant";
