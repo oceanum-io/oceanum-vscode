@@ -6,6 +6,18 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Removed
+
+- `oceanum.auth0Domain`, `oceanum.auth0ClientId` and `oceanum.auth0Audience`.
+  Which tenant issues the token, which application asks for it and which API it
+  is minted for are properties of the Oceanum deployment, not user preferences:
+  a wrong value yields a token no Oceanum service accepts, and the failure looks
+  like a login bug. The domain and client ID already fell back to the built-in
+  values, and the audience never had one, so sign-in is unchanged unless you had
+  overridden a setting. The values now live in `src/constants.ts`.
+
 ## [0.3.0]
 
 ### Added
