@@ -10,13 +10,26 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Removed
 
-- `oceanum.auth0Domain`, `oceanum.auth0ClientId` and `oceanum.auth0Audience`.
-  Which tenant issues the token, which application asks for it and which API it
-  is minted for are properties of the Oceanum deployment, not user preferences:
-  a wrong value yields a token no Oceanum service accepts, and the failure looks
-  like a login bug. The domain and client ID already fell back to the built-in
-  values, and the audience never had one, so sign-in is unchanged unless you had
-  overridden a setting. The values now live in `src/constants.ts`.
+- **Auth0 sign-in.** The `Oceanum: Sign In` and `Oceanum: Sign Out` commands,
+  the device-authorization flow behind them, and the
+  `oceanum.auth0Domain` / `oceanum.auth0ClientId` / `oceanum.auth0Audience`
+  settings are gone. The extension now authenticates with the Datamesh token
+  alone.
+
+  It was a second credential for the same access. The AI sidebar never used the
+  Auth0 token — it sends the Datamesh token as `X-Datamesh-Token` — and the
+  embedded Datamesh UI treats the two as alternatives for one header, using
+  `Bearer <jwt>` when an Auth0 token is present and `Token <datamesh token>`
+  otherwise. Removing it halves what can leak or expire and drops a whole
+  refresh/expiry code path.
+
+  **What you need to do:** if you signed in rather than configuring a token,
+  set one with `Oceanum: Configure Token` (get it from
+  [home.oceanum.io/account](https://home.oceanum.io/account)). Opening the
+  Datamesh UI without a token now prompts for one, as signing in used to.
+  Access and refresh tokens stored by earlier versions are deleted from secret
+  storage on first activation. If you had set any `oceanum.auth0*` value, VS
+  Code will flag it as an unknown setting until you remove the line.
 
 ## [0.3.0]
 
