@@ -23,6 +23,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   otherwise. Removing it halves what can leak or expire and drops a whole
   refresh/expiry code path.
 
+  The panel's REST calls therefore go out as `Token <datamesh token>` rather
+  than `Bearer <jwt>`. The Datamesh gateway accepts both.
+
   **What you need to do:** if you signed in rather than configuring a token,
   set one with `Oceanum: Configure Token` (get it from
   [home.oceanum.io/account](https://home.oceanum.io/account)). Opening the

@@ -57,6 +57,12 @@ describe("authentication surface", () => {
   });
 
   it("ships no Auth0 client code", () => {
-    expect(readdirSync(join(root, "src"))).not.toContain("auth");
+    // Any auth-ish directory, not just the one this removed: `src/auth0/`
+    // would have slipped past an equality check on the old name.
+    const authDirs = readdirSync(join(root, "src")).filter((entry) =>
+      /auth/i.test(entry),
+    );
+
+    expect(authDirs).toEqual([]);
   });
 });
