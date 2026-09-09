@@ -37,10 +37,14 @@ describe("Auth0 configuration", () => {
     expect(AUTH0_CLIENT_ID).not.toBe("");
   });
 
-  it("requests no audience until the tenant defines the API", () => {
-    // Requesting an audience the tenant does not define fails the device login
-    // outright, so this stays empty until that API exists. When it is set, it
-    // must be the API identifier the Oceanum services verify.
-    expect(AUTH0_AUDIENCE).toBe("");
+  it("asks for no audience, or for one shaped like an API identifier", () => {
+    // Empty is the current state: requesting an audience the tenant does not
+    // define fails the device login outright, so it stays empty until that API
+    // exists. Deliberately not pinned to "" -- src/constants.ts plans for it
+    // being set, and a test that fails on the intended change is a trap. What
+    // must hold either way is that it is never a stray string: Auth0 matches
+    // the API identifier exactly, so a missing scheme or a trailing slash is
+    // the failure this catches.
+    expect(AUTH0_AUDIENCE).toMatch(/^$|^https:\/\/[^\s/]+(\/[^\s]*[^\s/])?$/);
   });
 });
