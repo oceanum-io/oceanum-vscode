@@ -50,8 +50,16 @@ export function App(): React.ReactElement {
 
       {!hasToken && <TokenPrompt />}
 
-      {tab === "workspace" && <WorkspacePanel spec={workspaceSpec} />}
-      {tab === "chat" && hasToken && <ChatPanel />}
+      {/* Both panes stay mounted; the inactive one is hidden via CSS so its
+          local state (chat history, input, scroll) survives tab switches. */}
+      <div className="oceanum-tab-pane" hidden={tab !== "workspace"}>
+        <WorkspacePanel spec={workspaceSpec} />
+      </div>
+      {hasToken && (
+        <div className="oceanum-tab-pane" hidden={tab !== "chat"}>
+          <ChatPanel />
+        </div>
+      )}
     </div>
   );
 }
