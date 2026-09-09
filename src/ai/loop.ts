@@ -6,9 +6,12 @@ import type {
   OceanumResponse,
 } from "../types";
 
-/** What placing a response reports back: what ran, if anything did. */
+/**
+ * What placing a response reports back: what ran, if anything did. The
+ * agent's message is attached by the loop, which is the one that has it.
+ */
 export interface PlacedResponse {
-  runs: ObservedRun[];
+  runs: Omit<ObservedRun, "message">[];
 }
 
 /** The pieces the loop needs, injected so it is testable without VS Code. */
@@ -24,7 +27,12 @@ export interface LoopDeps {
     runs: ObservedRun[],
     signal: AbortSignal,
   ): Promise<OceanumResponse>;
-  place(response: OceanumResponse, autoRun: boolean): Promise<PlacedResponse>;
+  /** Stop must reach the cells, not only the requests, so the signal goes in. */
+  place(
+    response: OceanumResponse,
+    autoRun: boolean,
+    signal: AbortSignal,
+  ): Promise<PlacedResponse>;
   /** Each round's response, as it happens. */
   say(response: OceanumResponse): void;
 }
@@ -72,7 +80,7 @@ export async function runChatLoop(
 
   for (let round = 1; ; round++) {
     deps.say(response);
-    const placed = await deps.place(response, options.autoRunCode);
+    const placed = await deps.place(response, options.autoRunCode, signal);
     // The agent's explanation travels with the code it explains.
     for (const run of placed.runs) {
       runs.push({ ...run, message: response.message });

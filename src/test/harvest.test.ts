@@ -6,6 +6,7 @@ import {
   STDOUT_MIME,
   STDERR_MIME,
   ERROR_MIME,
+  OUTPUT_MAX_CHARS,
 } from "../ai/harvest";
 
 const enc = new TextEncoder();
@@ -66,9 +67,22 @@ describe("harvestOutputs", () => {
       error: null,
     });
   });
+
+  it("keeps only the tail of runaway stdout, and says so", () => {
+    const lines = Array.from({ length: 2000 }, (_, i) => `row ${i}\n`).join("");
+    const out = harvestOutputs([item(STDOUT_MIME, lines)]);
+    expect(out.stdout.length).toBeLessThanOrEqual(OUTPUT_MAX_CHARS);
+    expect(out.stdout).toMatch(/^\[\.\.\. \d+ characters omitted \.\.\.\]\n/);
+    expect(out.stdout).toMatch(/row 1999\n$/);
+  });
 });
 
 describe("stripAnsi", () => {
+  it("removes private-mode and OSC sequences progress bars emit", () => {
+    expect(stripAnsi("\x1b[?25lworking\x1b[?25h")).toBe("working");
+    expect(stripAnsi("\x1b]0;title\x07text")).toBe("text");
+  });
+
   it("removes colour and cursor codes", () => {
     expect(stripAnsi("\u001b[1;31mred\u001b[0m plain")).toBe("red plain");
   });

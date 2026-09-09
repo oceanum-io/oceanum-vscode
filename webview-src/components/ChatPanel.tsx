@@ -18,7 +18,11 @@ export function ChatPanel(): React.ReactElement {
     const handler = (event: MessageEvent) => {
       const msg = event.data as ExtToWebviewMessage;
       if (msg.command === "chat-response") {
+        // One bubble per round. The run may still be placing, running and
+        // observing cells, so this does not end "loading": Stop must stay
+        // available until "chat-done".
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
+      } else if (msg.command === "chat-done") {
         setLoading(false);
       } else if (msg.command === "chat-stopped") {
         // The user pressed Stop. A message, not an error: nothing went wrong.

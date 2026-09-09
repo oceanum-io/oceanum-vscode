@@ -63,5 +63,8 @@ export type ExtToWebviewMessage =
   | { command: "token-status"; hasToken: boolean }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
+  // A request can carry several responses (one per round), so the end of the
+  // run is its own message; the webview stays "thinking" until one of these.
+  | { command: "chat-done" }
   | { command: "chat-stopped" }
   | { command: "chat-error"; message: string };

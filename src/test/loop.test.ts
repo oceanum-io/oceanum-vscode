@@ -153,8 +153,8 @@ describe("runChatLoop: limits", () => {
       reply("More.", code("t()")),
     ]);
     const original = deps.place;
-    deps.place = async (r, a) => {
-      const out = await original(r, a);
+    deps.place = async (r, a, s) => {
+      const out = await original(r, a, s);
       controller.abort();
       return out;
     };
@@ -166,6 +166,24 @@ describe("runChatLoop: limits", () => {
     );
     expect(outcome).toBe("stopped");
     expect(observed).toEqual([]);
+  });
+
+  it("hands place the loop's signal, so Stop can reach a running cell", async () => {
+    const controller = new AbortController();
+    const { deps } = fakeDeps(reply("Start.", code("s()")), []);
+    const seen: AbortSignal[] = [];
+    const original = deps.place;
+    deps.place = async (r, a, signal) => {
+      seen.push(signal);
+      return original(r, a, signal);
+    };
+    await runChatLoop(
+      "q",
+      [],
+      deps,
+      opts({ autoRunCode: true, signal: controller.signal }),
+    );
+    expect(seen).toEqual([controller.signal]);
   });
 
   it("Stop during the first request returns stopped without placing anything", async () => {

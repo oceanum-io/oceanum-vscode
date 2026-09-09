@@ -11,12 +11,30 @@ export const STDOUT_MIME = "application/vnd.code.notebook.stdout";
 export const STDERR_MIME = "application/vnd.code.notebook.stderr";
 export const ERROR_MIME = "application/vnd.code.notebook.error";
 
+/**
+ * Mirrors the server's OBSERVATION_STDOUT_CHARS: it keeps only this much of
+ * the tail, so sending more is wire cost for nothing. A print loop over a
+ * dataset can otherwise produce megabytes per round.
+ */
+export const OUTPUT_MAX_CHARS = 4000;
+
+// CSI sequences (colours, cursor moves, `?25l`-style private modes) and OSC
+// sequences (window titles, hyperlinks) terminated by BEL or ST.
 // eslint-disable-next-line no-control-regex
-const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
 
 /** Kernel tracebacks are coloured for a terminal; the model does not need that. */
 export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
+}
+
+/** The last `OUTPUT_MAX_CHARS` of `text`, marked when something was cut. */
+function tail(text: string): string {
+  if (text.length <= OUTPUT_MAX_CHARS) {
+    return text;
+  }
+  const marker = `[... ${text.length - OUTPUT_MAX_CHARS} characters omitted ...]\n`;
+  return marker + text.slice(-(OUTPUT_MAX_CHARS - marker.length));
 }
 
 const decoder = new TextDecoder();
@@ -56,8 +74,8 @@ export function harvestOutputs(
 
   return {
     status: error === null ? "ok" : "error",
-    stdout: stripAnsi(stdout.join("")),
-    error,
+    stdout: tail(stripAnsi(stdout.join(""))),
+    error: error === null ? null : tail(error),
   };
 }
 

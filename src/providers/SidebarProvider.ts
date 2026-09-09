@@ -20,8 +20,7 @@ import {
   getActiveCellSource,
   runCellAndHarvest,
 } from "../notebook/notebookUtils";
-import { runChatLoop } from "../ai/loop";
-import type { ObservedRun } from "../types";
+import { runChatLoop, type PlacedResponse } from "../ai/loop";
 
 // Mirrors the server's EXECUTE_MAX_ROUNDS. Past it the server strips any
 // code from its answer, so there would be nothing to run anyway.
@@ -191,7 +190,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               token,
               signal,
             ),
-          place: (response, autoRun) => this._place(response, autoRun),
+          place: (response, autoRun, signal) =>
+            this._place(response, autoRun, signal),
           // One bubble per round, as it happens, so a chain of three steps
           // reads as three steps while it is still running.
           say: (response) => this._post({ command: "chat-response", response }),
@@ -203,10 +203,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           signal: controller.signal,
         },
       );
-      if (outcome === "stopped") {
-        this._post({ command: "chat-stopped" });
+      // A newer request has taken over the panel: its state is the one the
+      // webview shows, so this run's ending must not flip it back.
+      if (this._current !== controller) {
+        return;
       }
+      this._post({
+        command: outcome === "stopped" ? "chat-stopped" : "chat-done",
+      });
     } catch (err: unknown) {
+      if (this._current !== controller) {
+        return;
+      }
       if (controller.signal.aborted) {
         this._post({ command: "chat-stopped" });
         return;
@@ -272,18 +280,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /**
    * Place every block in order -- code as code cells, markdown as markdown
    * cells -- and, when auto-run is on, run each code cell as it lands and
-   * report what it produced.
+   * report what it produced. Stop ends placement between blocks and cancels
+   * the cell that is running.
    */
   private async _place(
     response: OceanumResponse,
     autoRun: boolean,
-  ): Promise<{ runs: ObservedRun[] }> {
-    const runs: ObservedRun[] = [];
+    signal: AbortSignal,
+  ): Promise<PlacedResponse> {
+    const runs: PlacedResponse["runs"] = [];
     for (const block of response.blocks) {
-      const index = await insertContent(block.content, block.type);
-      if (block.type === "code" && autoRun && index !== null) {
-        const outcome = await runCellAndHarvest(index);
-        runs.push({ code: block.content, message: "", ...outcome });
+      if (signal.aborted) {
+        break;
+      }
+      const cell = await insertContent(block.content, block.type);
+      if (block.type === "code" && autoRun && cell !== null) {
+        const outcome = await runCellAndHarvest(cell, signal);
+        runs.push({ code: block.content, ...outcome });
       }
     }
     return { runs };

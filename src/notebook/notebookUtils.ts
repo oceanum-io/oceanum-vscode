@@ -6,11 +6,15 @@ import type { ObservedRun } from "../types";
 /**
  * Insert code or markdown into the active notebook or text editor.
  * Priority: active notebook editor → active text editor → clipboard fallback.
+ *
+ * Returns the notebook cell that was inserted, so the caller can run it. It is
+ * the cell rather than its index: a `NotebookCell` follows its cell across
+ * later edits, an index does not.
  */
 export async function insertContent(
   content: string,
   type: "code" | "markdown",
-): Promise<number | null> {
+): Promise<vscode.NotebookCell | null> {
   const notebookEditor = vscode.window.activeNotebookEditor;
   if (notebookEditor) {
     return insertNotebookCell(notebookEditor, content, type);
@@ -37,7 +41,7 @@ async function insertNotebookCell(
   editor: vscode.NotebookEditor,
   content: string,
   type: "code" | "markdown",
-): Promise<number> {
+): Promise<vscode.NotebookCell> {
   const notebook = editor.notebook;
   const cellKind =
     type === "markdown"
@@ -57,30 +61,64 @@ async function insertNotebookCell(
   // Move selection to the new cell
   editor.selection = new vscode.NotebookRange(insertIndex, insertIndex + 1);
   editor.revealRange(editor.selection);
-  return insertIndex;
+  return notebook.cellAt(insertIndex);
 }
 
 /**
- * Run one cell of the active notebook and report what it produced.
+ * Run one notebook cell and report what it produced.
  *
- * `notebook.cell.execute` resolves when the kernel has finished, so the
- * outputs on the cell afterwards are this run's. Reading them is what makes
- * the iterate workflow possible: it is the only place the kernel's answer can
- * be seen.
+ * The cell is addressed by its own notebook and its index at the moment of
+ * the call, not by whichever notebook is active: the user may have clicked
+ * elsewhere while an earlier cell ran. `notebook.cell.execute` resolves when
+ * the kernel has finished, so the outputs and execution summary on the cell
+ * afterwards are this run's. Reading them is what makes the iterate workflow
+ * possible: it is the only place the kernel's answer can be seen.
+ *
+ * Stop cancels the running cell through the same command family, so a long
+ * query does not keep the kernel busy after the user gave up on it.
  */
 export async function runCellAndHarvest(
-  index: number,
+  cell: vscode.NotebookCell,
+  signal?: AbortSignal,
 ): Promise<Pick<ObservedRun, "status" | "stdout" | "error">> {
-  const editor = vscode.window.activeNotebookEditor;
-  if (!editor) {
-    return { status: "error", stdout: "", error: "No active notebook." };
-  }
-  await vscode.commands.executeCommand("notebook.cell.execute", {
-    ranges: [{ start: index, end: index + 1 }],
-    document: editor.notebook.uri,
+  const target = () => ({
+    ranges: [{ start: cell.index, end: cell.index + 1 }],
+    document: cell.notebook.uri,
   });
-  const cell = editor.notebook.cellAt(index);
-  return harvestOutputs(cell.outputs.flatMap((o) => o.items));
+  const cancel = () =>
+    void vscode.commands.executeCommand(
+      "notebook.cell.cancelExecution",
+      target(),
+    );
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    await vscode.commands.executeCommand("notebook.cell.execute", target());
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+  }
+
+  const harvested = harvestOutputs(cell.outputs.flatMap((o) => o.items));
+  const success = cell.executionSummary?.success;
+  // The command resolves without running when there is no kernel to run on
+  // (the picker was dismissed, or nothing is installed). Empty outputs would
+  // then read as a clean, silent run, and the agent would build on it.
+  if (success === undefined) {
+    return {
+      status: "error",
+      stdout: harvested.stdout,
+      error: "The cell did not run. Is a kernel selected for this notebook?",
+    };
+  }
+  if (success === false && harvested.status === "ok") {
+    return {
+      status: "error",
+      stdout: harvested.stdout,
+      error: signal?.aborted
+        ? "Execution was stopped."
+        : "Execution failed without a traceback.",
+    };
+  }
+  return harvested;
 }
 
 /**
