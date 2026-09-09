@@ -80,6 +80,17 @@ describe("harvestOutputs", () => {
     expect(omitted + kept.length).toBe(lines.length);
     expect(lines.endsWith(kept)).toBe(true);
   });
+
+  it("counts omitted characters correctly when the count gains a digit", () => {
+    // 103990 - 4000 = 99990 omitted before the marker is counted; the marker
+    // pushes the count past 100000, which lengthens the marker by one.
+    const text = "x".repeat(103990);
+    const out = harvestOutputs([item(STDOUT_MIME, text)]);
+    expect(out.stdout.length).toBe(OUTPUT_MAX_CHARS);
+    const omitted = Number(/^\[\.\.\. (\d+) /.exec(out.stdout)![1]);
+    const kept = out.stdout.slice(out.stdout.indexOf("\n") + 1);
+    expect(omitted + kept.length).toBe(text.length);
+  });
 });
 
 describe("stripAnsi", () => {

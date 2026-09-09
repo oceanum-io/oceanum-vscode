@@ -34,11 +34,19 @@ function tail(text: string): string {
     return text;
   }
   // The marker counts against the cap, so what is omitted depends on its
-  // own length. Two passes: the second only differs if the digit count grew.
+  // own length, which depends on the count's digits. Iterate to the fixed
+  // point: a longer marker omits one more character, which can carry the
+  // count over a power of ten and lengthen the marker again.
   const markerFor = (omitted: number) =>
     `[... ${omitted} characters omitted ...]\n`;
   let marker = markerFor(text.length - OUTPUT_MAX_CHARS);
-  marker = markerFor(text.length - (OUTPUT_MAX_CHARS - marker.length));
+  for (;;) {
+    const next = markerFor(text.length - (OUTPUT_MAX_CHARS - marker.length));
+    if (next === marker) {
+      break;
+    }
+    marker = next;
+  }
   return marker + text.slice(-(OUTPUT_MAX_CHARS - marker.length));
 }
 

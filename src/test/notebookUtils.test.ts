@@ -6,11 +6,13 @@ const {
   mockApplyEdit,
   mockWriteText,
   mockShowInformationMessage,
+  mockShowWarningMessage,
   mockExecuteCommand,
 } = vi.hoisted(() => ({
   mockApplyEdit: vi.fn().mockResolvedValue(true),
   mockWriteText: vi.fn().mockResolvedValue(undefined),
   mockShowInformationMessage: vi.fn(),
+  mockShowWarningMessage: vi.fn(),
   mockExecuteCommand: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -41,6 +43,7 @@ vi.mock("vscode", () => ({
       return activeTextEditor;
     },
     showInformationMessage: mockShowInformationMessage,
+    showWarningMessage: mockShowWarningMessage,
   },
   env: { clipboard: { writeText: mockWriteText } },
   workspace: { applyEdit: mockApplyEdit },
@@ -107,6 +110,8 @@ describe("insertContent", () => {
     mockNotebookEditor.notebook.cellAt.mockReturnValue({ index: 2 });
     expect(await insertContent("x = 1", "code")).toBeNull();
     expect(mockNotebookEditor.notebook.cellAt).not.toHaveBeenCalled();
+    // The user is told, rather than the block vanishing without a trace.
+    expect(mockShowWarningMessage).toHaveBeenCalledOnce();
   });
 });
 
