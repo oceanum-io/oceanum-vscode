@@ -25,7 +25,9 @@ function fakeDeps(
     observe: async (_p, _h, runs) => {
       observed.push(runs.map((r) => ({ ...r })));
       const next = pending.shift();
-      if (!next) throw new Error("observe called more times than scripted");
+      if (!next) {
+        throw new Error("observe called more times than scripted");
+      }
       return next;
     },
     place: async (response, autoRun) => {
@@ -133,7 +135,11 @@ describe("runChatLoop: the three workflows", () => {
 });
 
 describe("runChatLoop: limits", () => {
-  it("stops at maxRounds even if the agent keeps sending code", async () => {
+  it("keeps observing up to maxRounds, then stops even if the agent keeps sending code", async () => {
+    // The cap is a safety net checked AFTER each round, so with maxRounds 3
+    // the loop observes after rounds 1, 2 and 3 and refuses a fourth. Checking
+    // before the observe would skip the server's own at-cap explanation turn,
+    // leaving the last cell executed but never explained.
     const forever = Array.from({ length: 10 }, (_, i) =>
       reply(`More ${i}.`, code(`s${i}()`)),
     );
@@ -144,7 +150,7 @@ describe("runChatLoop: limits", () => {
       deps,
       opts({ autoRunCode: true, iterate: true, maxRounds: 3 }),
     );
-    expect(observed).toHaveLength(2);
+    expect(observed).toHaveLength(3);
   });
 
   it("Stop between rounds halts the loop and reports stopped", async () => {

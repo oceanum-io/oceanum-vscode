@@ -74,6 +74,11 @@ describe("harvestOutputs", () => {
     expect(out.stdout.length).toBeLessThanOrEqual(OUTPUT_MAX_CHARS);
     expect(out.stdout).toMatch(/^\[\.\.\. \d+ characters omitted \.\.\.\]\n/);
     expect(out.stdout).toMatch(/row 1999\n$/);
+    // The marker's count is the number of characters actually missing.
+    const omitted = Number(/^\[\.\.\. (\d+) /.exec(out.stdout)![1]);
+    const kept = out.stdout.slice(out.stdout.indexOf("\n") + 1);
+    expect(omitted + kept.length).toBe(lines.length);
+    expect(lines.endsWith(kept)).toBe(true);
   });
 });
 
@@ -85,5 +90,14 @@ describe("stripAnsi", () => {
 
   it("removes colour and cursor codes", () => {
     expect(stripAnsi("\u001b[1;31mred\u001b[0m plain")).toBe("red plain");
+  });
+
+  it("does not swallow text between an ST-terminated OSC and a later BEL", () => {
+    // An OSC 8 hyperlink closed with ESC-backslash, then a BEL-terminated title.
+    expect(
+      stripAnsi(
+        "\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ then \x1b]0;t\x07end",
+      ),
+    ).toBe("link then end");
   });
 });

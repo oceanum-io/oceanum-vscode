@@ -1,10 +1,5 @@
 // Copyright Oceanum Ltd. Apache 2.0
-import type {
-  Block,
-  ChatMessage,
-  ObservedRun,
-  OceanumResponse,
-} from "../types";
+import type { ChatMessage, ObservedRun, OceanumResponse } from "../types";
 
 /**
  * What placing a response reports back: what ran, if anything did. The
@@ -61,8 +56,16 @@ export type LoopOutcome = "done" | "stopped";
  *   autoRunCode on, iterate on   -> place, run, observe, repeat.  (workflow 2)
  *
  * `iterate` without `autoRunCode` is inert: nothing ran, so there is nothing
- * to observe. Rounds end when a response carries no code, at `maxRounds`
- * (the server strips code past its own cap), or on Stop.
+ * to observe. Rounds end when a response carries no code, or on Stop.
+ *
+ * `maxRounds` is a safety net, not the real cap. The server's
+ * EXECUTE_MAX_ROUNDS is what ends a chain: at its cap it answers WITHOUT code,
+ * explaining the last run, and that response ends the loop here because
+ * nothing runs. So the client must keep observing up to and including the
+ * server's cap, or the last cell executes with no explanation. `maxRounds`
+ * only stops a client talking to a server that keeps sending code, and is
+ * checked after each round rather than before the observe for that reason.
+ * Same shape as oceanumlab's loop, so the two notebook clients behave alike.
  */
 export async function runChatLoop(
   prompt: string,
@@ -89,13 +92,13 @@ export async function runChatLoop(
     if (signal.aborted) {
       return "stopped";
     }
-    if (!options.autoRunCode || !options.iterate) {
+    // Nothing ran this round -- iterate off, autoRun off, or a response with
+    // no code -- so there is nothing to observe. One check covers all three:
+    // `place` reports runs only for code it actually executed.
+    if (!options.iterate || placed.runs.length === 0) {
       return "done";
     }
-    if (!hasCode(response.blocks) || placed.runs.length === 0) {
-      return "done";
-    }
-    if (round >= options.maxRounds) {
+    if (round > options.maxRounds) {
       return "done";
     }
 
@@ -104,8 +107,4 @@ export async function runChatLoop(
       return "stopped";
     }
   }
-}
-
-function hasCode(blocks: Block[]): boolean {
-  return blocks.some((b) => b.type === "code");
 }

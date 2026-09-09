@@ -99,6 +99,15 @@ describe("insertContent", () => {
     expect(mockWriteText).toHaveBeenCalledWith("x = 1");
     expect(mockShowInformationMessage).toHaveBeenCalledOnce();
   });
+
+  it("returns no cell when the notebook refuses the edit, so nothing else gets run", async () => {
+    activeNotebookEditor =
+      mockNotebookEditor as unknown as typeof mockNotebookEditor;
+    mockApplyEdit.mockResolvedValueOnce(false);
+    mockNotebookEditor.notebook.cellAt.mockReturnValue({ index: 2 });
+    expect(await insertContent("x = 1", "code")).toBeNull();
+    expect(mockNotebookEditor.notebook.cellAt).not.toHaveBeenCalled();
+  });
 });
 
 describe("runCellAndHarvest", () => {
@@ -137,7 +146,7 @@ describe("runCellAndHarvest", () => {
 
   it("Stop cancels the running cell", async () => {
     const controller = new AbortController();
-    mockExecuteCommand.mockImplementation(async (cmd: string) => {
+    mockExecuteCommand.mockImplementationOnce(async (cmd: string) => {
       if (cmd === "notebook.cell.execute") {
         controller.abort();
       }
@@ -155,6 +164,30 @@ describe("runCellAndHarvest", () => {
       stdout: "",
       error: "Execution was stopped.",
     });
+  });
+
+  it("does not run a cell at all when Stop already happened", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const out = await runCellAndHarvest(fakeCell(), controller.signal);
+    expect(mockExecuteCommand).not.toHaveBeenCalled();
+    expect(out).toEqual({
+      status: "error",
+      stdout: "",
+      error: "Execution was stopped.",
+    });
+  });
+
+  it("reports stopped, not 'no kernel', when Stop lands before the cell started", async () => {
+    const controller = new AbortController();
+    mockExecuteCommand.mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    const out = await runCellAndHarvest(
+      fakeCell({ outputs: [], executionSummary: undefined }),
+      controller.signal,
+    );
+    expect(out.error).toBe("Execution was stopped.");
   });
 });
 

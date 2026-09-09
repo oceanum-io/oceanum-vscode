@@ -41,7 +41,7 @@ async function insertNotebookCell(
   editor: vscode.NotebookEditor,
   content: string,
   type: "code" | "markdown",
-): Promise<vscode.NotebookCell> {
+): Promise<vscode.NotebookCell | null> {
   const notebook = editor.notebook;
   const cellKind =
     type === "markdown"
@@ -56,7 +56,11 @@ async function insertNotebookCell(
   edit.set(notebook.uri, [
     vscode.NotebookEdit.insertCells(insertIndex, [newCell]),
   ]);
-  await vscode.workspace.applyEdit(edit);
+  // A refused edit (read-only or closed notebook) leaves whatever cell was at
+  // `insertIndex`; returning it would run the user's own cell as the agent's.
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    return null;
+  }
 
   // Move selection to the new cell
   editor.selection = new vscode.NotebookRange(insertIndex, insertIndex + 1);
@@ -81,6 +85,18 @@ export async function runCellAndHarvest(
   cell: vscode.NotebookCell,
   signal?: AbortSignal,
 ): Promise<Pick<ObservedRun, "status" | "stdout" | "error">> {
+  const stopped = (
+    stdout = "",
+  ): Pick<ObservedRun, "status" | "stdout" | "error"> => ({
+    status: "error",
+    stdout,
+    error: "Execution was stopped.",
+  });
+  // Stop can land while the cell is still being inserted; the abort listener
+  // below never fires for a signal that is already aborted.
+  if (signal?.aborted) {
+    return stopped();
+  }
   const target = () => ({
     ranges: [{ start: cell.index, end: cell.index + 1 }],
     document: cell.notebook.uri,
@@ -98,6 +114,12 @@ export async function runCellAndHarvest(
   }
 
   const harvested = harvestOutputs(cell.outputs.flatMap((o) => o.items));
+  // A cancelled cell may end with no summary at all (stopped while queued)
+  // or with a KeyboardInterrupt traceback. The run is discarded either way,
+  // so the reason is what matters, not the kernel's account of it.
+  if (signal?.aborted) {
+    return stopped(harvested.stdout);
+  }
   const success = cell.executionSummary?.success;
   // The command resolves without running when there is no kernel to run on
   // (the picker was dismissed, or nothing is installed). Empty outputs would
@@ -113,9 +135,7 @@ export async function runCellAndHarvest(
     return {
       status: "error",
       stdout: harvested.stdout,
-      error: signal?.aborted
-        ? "Execution was stopped."
-        : "Execution failed without a traceback.",
+      error: "Execution failed without a traceback.",
     };
   }
   return harvested;
@@ -126,7 +146,9 @@ export async function runCellAndHarvest(
  */
 export function getNotebookCells(): string[] {
   const editor = vscode.window.activeNotebookEditor;
-  if (!editor) return [];
+  if (!editor) {
+    return [];
+  }
 
   return editor.notebook
     .getCells()
@@ -143,10 +165,14 @@ export function getActiveCellSource(): {
   isCode: boolean;
 } | null {
   const editor = vscode.window.activeNotebookEditor;
-  if (!editor) return null;
+  if (!editor) {
+    return null;
+  }
 
   const selection = editor.selection;
-  if (selection.isEmpty) return null;
+  if (selection.isEmpty) {
+    return null;
+  }
 
   const cell = editor.notebook.cellAt(selection.start);
   return {

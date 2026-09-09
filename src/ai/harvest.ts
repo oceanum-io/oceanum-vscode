@@ -21,7 +21,7 @@ export const OUTPUT_MAX_CHARS = 4000;
 // CSI sequences (colours, cursor moves, `?25l`-style private modes) and OSC
 // sequences (window titles, hyperlinks) terminated by BEL or ST.
 // eslint-disable-next-line no-control-regex
-const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
+const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
 
 /** Kernel tracebacks are coloured for a terminal; the model does not need that. */
 export function stripAnsi(text: string): string {
@@ -33,7 +33,12 @@ function tail(text: string): string {
   if (text.length <= OUTPUT_MAX_CHARS) {
     return text;
   }
-  const marker = `[... ${text.length - OUTPUT_MAX_CHARS} characters omitted ...]\n`;
+  // The marker counts against the cap, so what is omitted depends on its
+  // own length. Two passes: the second only differs if the digit count grew.
+  const markerFor = (omitted: number) =>
+    `[... ${omitted} characters omitted ...]\n`;
+  let marker = markerFor(text.length - OUTPUT_MAX_CHARS);
+  marker = markerFor(text.length - (OUTPUT_MAX_CHARS - marker.length));
   return marker + text.slice(-(OUTPUT_MAX_CHARS - marker.length));
 }
 

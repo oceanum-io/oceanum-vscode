@@ -1,6 +1,6 @@
 // Copyright Oceanum Ltd. Apache 2.0
 import * as vscode from "vscode";
-import { OCEANUM_AI_BACKEND_URL } from "../constants";
+import { MAX_OBSERVE_ROUNDS, OCEANUM_AI_BACKEND_URL } from "../constants";
 import { COMMANDS } from "../commands";
 import { getNonce } from "../utils/nonce";
 import type {
@@ -21,10 +21,6 @@ import {
   runCellAndHarvest,
 } from "../notebook/notebookUtils";
 import { runChatLoop, type PlacedResponse } from "../ai/loop";
-
-// Mirrors the server's EXECUTE_MAX_ROUNDS. Past it the server strips any
-// code from its answer, so there would be nothing to run anyway.
-const MAX_ROUNDS = 5;
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view: vscode.WebviewView | undefined;
@@ -59,6 +55,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     );
 
     webviewView.onDidDispose(() => {
+      // The Stop button went with the view; a run left going would keep
+      // executing cells in the kernel with nothing able to halt it.
+      this._current?.abort();
       this._view = undefined;
       this._disposables.forEach((d) => d.dispose());
       this._disposables = [];
@@ -121,7 +120,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           .getConfiguration("oceanum")
           .get<boolean>("injectToken", false);
         const lines: string[] = [];
-        if (injectToken) lines.push(generateTokenLine());
+        if (injectToken) {
+          lines.push(generateTokenLine());
+        }
         lines.push(generateDatasourceCode(msg.datasource, injectToken));
         await insertContent(lines.join("\n"), "code");
         break;
@@ -154,8 +155,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const activeCell = getActiveCellSource();
 
     const payload: Record<string, unknown> = { prompt };
-    if (chatHistory.length > 0) payload.chatHistory = chatHistory;
-    if (cells.length > 0) payload.notebookCells = cells;
+    if (chatHistory.length > 0) {
+      payload.chatHistory = chatHistory;
+    }
+    if (cells.length > 0) {
+      payload.notebookCells = cells;
+    }
     if (activeCell) {
       payload[activeCell.isCode ? "codeContext" : "context"] =
         activeCell.source;
@@ -199,7 +204,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         {
           autoRunCode,
           iterate,
-          maxRounds: MAX_ROUNDS,
+          maxRounds: MAX_OBSERVE_ROUNDS,
           signal: controller.signal,
         },
       );
@@ -303,7 +308,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _getToken(): Promise<string> {
-    if (this._cachedToken !== undefined) return this._cachedToken;
+    if (this._cachedToken !== undefined) {
+      return this._cachedToken;
+    }
     const secret = await this._context.secrets.get("oceanum.datameshToken");
     const token =
       secret ??
