@@ -44,6 +44,18 @@ export interface ChatMessage {
   content: string;
 }
 
+/**
+ * What one code cell did when it ran, in the shape `/api/chat/observe` takes.
+ * `message` is the agent's explanation for the response that carried the code.
+ */
+export interface ObservedRun {
+  code: string;
+  status: "ok" | "error";
+  stdout: string;
+  error: string | null;
+  message: string;
+}
+
 // Messages sent from sidebar webview → extension host
 export type WebviewToExtMessage =
   | { command: "insert-datasource"; datasource: IDatasource }
@@ -51,7 +63,8 @@ export type WebviewToExtMessage =
   | { command: "set-token" }
   | { command: "get-token-status" }
   | { command: "get-notebook-context" }
-  | { command: "chat-request"; prompt: string; chatHistory: ChatMessage[] };
+  | { command: "chat-request"; prompt: string; chatHistory: ChatMessage[] }
+  | { command: "chat-stop" };
 
 // Messages sent from extension host → sidebar webview
 export type ExtToWebviewMessage =
@@ -59,4 +72,8 @@ export type ExtToWebviewMessage =
   | { command: "token-status"; hasToken: boolean }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
+  // A request can carry several responses (one per round), so the end of the
+  // run is its own message; the webview stays "thinking" until one of these.
+  | { command: "chat-done" }
+  | { command: "chat-stopped" }
   | { command: "chat-error"; message: string };

@@ -2,7 +2,7 @@
   "name": "oceanum",
   "displayName": "Oceanum",
   "description": "Oceanum Datamesh and AI integration for VS Code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "oceanum",
   "engines": {
     "vscode": "^1.80.0"
@@ -45,6 +45,16 @@
           "type": "string",
           "description": "Auth0 API audience identifier (required for tokens that call Datamesh APIs)",
           "default": ""
+        },
+        "oceanum.autoRunCode": {
+          "type": "boolean",
+          "description": "Run code cells the AI inserts as soon as they are placed.",
+          "default": false
+        },
+        "oceanum.iterate": {
+          "type": "boolean",
+          "description": "After running, send each cell's output back to the AI so it can fix an error or take the next step. Only takes effect with Auto-run code on.",
+          "default": false
         }
       }
     },

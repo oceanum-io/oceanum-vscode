@@ -2,13 +2,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // vi.mock is hoisted above imports, so mock variables must use vi.hoisted()
-const { mockApplyEdit, mockWriteText, mockShowInformationMessage } = vi.hoisted(
-  () => ({
-    mockApplyEdit: vi.fn().mockResolvedValue(true),
-    mockWriteText: vi.fn().mockResolvedValue(undefined),
-    mockShowInformationMessage: vi.fn(),
-  }),
-);
+const {
+  mockApplyEdit,
+  mockWriteText,
+  mockShowInformationMessage,
+  mockShowWarningMessage,
+  mockExecuteCommand,
+} = vi.hoisted(() => ({
+  mockApplyEdit: vi.fn().mockResolvedValue(true),
+  mockWriteText: vi.fn().mockResolvedValue(undefined),
+  mockShowInformationMessage: vi.fn(),
+  mockShowWarningMessage: vi.fn(),
+  mockExecuteCommand: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockNotebookEditor = {
   notebook: {
@@ -37,9 +43,11 @@ vi.mock("vscode", () => ({
       return activeTextEditor;
     },
     showInformationMessage: mockShowInformationMessage,
+    showWarningMessage: mockShowWarningMessage,
   },
   env: { clipboard: { writeText: mockWriteText } },
   workspace: { applyEdit: mockApplyEdit },
+  commands: { executeCommand: mockExecuteCommand },
   NotebookCellKind: { Code: 2, Markup: 1 },
   NotebookCellData: vi
     .fn()
@@ -55,7 +63,10 @@ import {
   insertContent,
   getNotebookCells,
   getActiveCellSource,
+  runCellAndHarvest,
 } from "../notebook/notebookUtils";
+import { STDOUT_MIME } from "../ai/harvest";
+import type * as vscode from "vscode";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -90,6 +101,98 @@ describe("insertContent", () => {
     await insertContent("x = 1", "code");
     expect(mockWriteText).toHaveBeenCalledWith("x = 1");
     expect(mockShowInformationMessage).toHaveBeenCalledOnce();
+  });
+
+  it("returns no cell when the notebook refuses the edit, so nothing else gets run", async () => {
+    activeNotebookEditor =
+      mockNotebookEditor as unknown as typeof mockNotebookEditor;
+    mockApplyEdit.mockResolvedValueOnce(false);
+    mockNotebookEditor.notebook.cellAt.mockReturnValue({ index: 2 });
+    expect(await insertContent("x = 1", "code")).toBeNull();
+    expect(mockNotebookEditor.notebook.cellAt).not.toHaveBeenCalled();
+    // The user is told, rather than the block vanishing without a trace.
+    expect(mockShowWarningMessage).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runCellAndHarvest", () => {
+  const uri = { toString: () => "file:///other.ipynb" };
+  const fakeCell = (over: Record<string, unknown> = {}) =>
+    ({
+      index: 3,
+      notebook: { uri },
+      outputs: [
+        {
+          items: [
+            { mime: STDOUT_MIME, data: new TextEncoder().encode("hi\n") },
+          ],
+        },
+      ],
+      executionSummary: { success: true },
+      ...over,
+    }) as unknown as vscode.NotebookCell;
+
+  it("runs the cell in ITS notebook, at its current index, and harvests", async () => {
+    const out = await runCellAndHarvest(fakeCell());
+    expect(mockExecuteCommand).toHaveBeenCalledWith("notebook.cell.execute", {
+      ranges: [{ start: 3, end: 4 }],
+      document: uri,
+    });
+    expect(out).toEqual({ status: "ok", stdout: "hi\n", error: null });
+  });
+
+  it("reports a cell that never ran as an error, not a silent success", async () => {
+    const out = await runCellAndHarvest(
+      fakeCell({ outputs: [], executionSummary: undefined }),
+    );
+    expect(out.status).toBe("error");
+    expect(out.error).toMatch(/did not run/);
+  });
+
+  it("Stop cancels the running cell", async () => {
+    const controller = new AbortController();
+    mockExecuteCommand.mockImplementationOnce(async (cmd: string) => {
+      if (cmd === "notebook.cell.execute") {
+        controller.abort();
+      }
+    });
+    const out = await runCellAndHarvest(
+      fakeCell({ outputs: [], executionSummary: { success: false } }),
+      controller.signal,
+    );
+    expect(mockExecuteCommand).toHaveBeenCalledWith(
+      "notebook.cell.cancelExecution",
+      { ranges: [{ start: 3, end: 4 }], document: uri },
+    );
+    expect(out).toEqual({
+      status: "error",
+      stdout: "",
+      error: "Execution was stopped.",
+    });
+  });
+
+  it("does not run a cell at all when Stop already happened", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const out = await runCellAndHarvest(fakeCell(), controller.signal);
+    expect(mockExecuteCommand).not.toHaveBeenCalled();
+    expect(out).toEqual({
+      status: "error",
+      stdout: "",
+      error: "Execution was stopped.",
+    });
+  });
+
+  it("reports stopped, not 'no kernel', when Stop lands before the cell started", async () => {
+    const controller = new AbortController();
+    mockExecuteCommand.mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    const out = await runCellAndHarvest(
+      fakeCell({ outputs: [], executionSummary: undefined }),
+      controller.signal,
+    );
+    expect(out.error).toBe("Execution was stopped.");
   });
 });
 
