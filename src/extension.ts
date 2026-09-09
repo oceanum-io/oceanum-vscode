@@ -23,7 +23,13 @@ async function clearLegacyAuth0Secrets(
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  void clearLegacyAuth0Secrets(context);
+  clearLegacyAuth0Secrets(context).catch((err: unknown) => {
+    // Secret storage is not always there: Linux without a working keyring,
+    // some remote sessions. Failing to delete credentials nothing reads is not
+    // worth failing activation over, but it should not be a silent unhandled
+    // rejection either.
+    console.warn("[oceanum] could not clear legacy Auth0 secrets:", err);
+  });
 
   const sidebarProvider = new SidebarProvider(context);
 
