@@ -20,6 +20,13 @@ export function ChatPanel(): React.ReactElement {
       if (msg.command === "chat-response") {
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
         setLoading(false);
+      } else if (msg.command === "chat-stopped") {
+        // The user pressed Stop. A message, not an error: nothing went wrong.
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Stopped." },
+        ]);
+        setLoading(false);
       } else if (msg.command === "chat-error") {
         setError(msg.message);
         setLoading(false);
@@ -122,13 +129,23 @@ export function ChatPanel(): React.ReactElement {
           onKeyDown={onKeyDown}
           disabled={loading}
         />
-        <button
-          className="chat-send"
-          onClick={submit}
-          disabled={loading || !input.trim()}
-        >
-          {loading ? "…" : "Send"}
-        </button>
+        {loading ? (
+          <button
+            className="chat-send"
+            onClick={() => vscode.postMessage({ command: "chat-stop" })}
+            title="Stop the current response"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            className="chat-send"
+            onClick={submit}
+            disabled={!input.trim()}
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

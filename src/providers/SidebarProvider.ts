@@ -18,7 +18,14 @@ import {
   insertContent,
   getNotebookCells,
   getActiveCellSource,
+  runCellAndHarvest,
 } from "../notebook/notebookUtils";
+import { runChatLoop } from "../ai/loop";
+import type { ObservedRun } from "../types";
+
+// Mirrors the server's EXECUTE_MAX_ROUNDS. Past it the server strips any
+// code from its answer, so there would be nothing to run anyway.
+const MAX_ROUNDS = 5;
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view: vscode.WebviewView | undefined;
@@ -27,6 +34,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pendingWorkspaceSpec: IWorkspaceSpec | undefined;
   // Cached token — invalidated via invalidateToken() on any token change
   private _cachedToken: string | undefined;
+  // The chat run in flight, if any; "chat-stop" aborts it.
+  private _current: AbortController | undefined;
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -122,6 +131,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "chat-request":
         await this._handleChatRequest(msg.prompt, msg.chatHistory);
         break;
+
+      case "chat-stop":
+        this._current?.abort();
+        break;
     }
   }
 
@@ -149,69 +162,131 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         activeCell.source;
     }
 
-    let response: OceanumResponse;
+    // Read per prompt, not once at activation, so a settings change applies
+    // to the next question without a reload.
+    const cfg = vscode.workspace.getConfiguration("oceanum");
+    const autoRunCode = cfg.get<boolean>("autoRunCode", false);
+    const iterate = cfg.get<boolean>("iterate", false);
+
+    this._current?.abort();
+    const controller = new AbortController();
+    this._current = controller;
+
     try {
-      const res = await fetch(`${OCEANUM_AI_BACKEND_URL}/api/chat`, {
+      const outcome = await runChatLoop(
+        prompt,
+        chatHistory,
+        {
+          route: (p, h, signal) =>
+            this._call(
+              "/api/chat",
+              { ...payload, prompt: p, chatHistory: h },
+              token,
+              signal,
+            ),
+          observe: (p, h, runs, signal) =>
+            this._call(
+              "/api/chat/observe",
+              { ...payload, prompt: p, chatHistory: h, runs },
+              token,
+              signal,
+            ),
+          place: (response, autoRun) => this._place(response, autoRun),
+          // One bubble per round, as it happens, so a chain of three steps
+          // reads as three steps while it is still running.
+          say: (response) => this._post({ command: "chat-response", response }),
+        },
+        {
+          autoRunCode,
+          iterate,
+          maxRounds: MAX_ROUNDS,
+          signal: controller.signal,
+        },
+      );
+      if (outcome === "stopped") {
+        this._post({ command: "chat-stopped" });
+      }
+    } catch (err: unknown) {
+      if (controller.signal.aborted) {
+        this._post({ command: "chat-stopped" });
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      this._post({ command: "chat-error", message });
+    } finally {
+      if (this._current === controller) {
+        this._current = undefined;
+      }
+    }
+  }
+
+  /** One POST to the backend, with the token and the run's abort signal. */
+  private async _call(
+    path: string,
+    body: Record<string, unknown>,
+    token: string,
+    signal: AbortSignal,
+  ): Promise<OceanumResponse> {
+    let res: Response;
+    try {
+      res = await fetch(`${OCEANUM_AI_BACKEND_URL}${path}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Datamesh-Token": token,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
+        signal,
       });
-
-      if (res.status === 401) {
-        this._post({
-          command: "chat-error",
-          message: "Invalid or expired Datamesh token.",
-        });
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.text().catch(() => res.statusText);
-        this._post({
-          command: "chat-error",
-          message: `Backend error: ${body}`,
-        });
-        return;
-      }
-      const body = (await res.json()) as Partial<OceanumResponse> | null;
-      // Checked rather than cast. The cast was safe only while the contract
-      // never changed; it has (OCE-173), and an extension meeting a backend on
-      // the other side of that change would read `blocks` off a body with none,
-      // throwing below so the user sees nothing happen at all.
-      if (
-        !body ||
-        typeof body.message !== "string" ||
-        !Array.isArray(body.blocks)
-      ) {
-        this._post({
-          command: "chat-error",
-          message:
-            "Unexpected response from Oceanum AI. It may be running an " +
-            "incompatible version of the chat API.",
-        });
-        return;
-      }
-      response = { message: body.message, blocks: body.blocks };
     } catch (err: unknown) {
+      if (signal.aborted) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : String(err);
-      this._post({
-        command: "chat-error",
-        message: `Could not reach Oceanum AI: ${message}`,
-      });
-      return;
+      throw new Error(`Could not reach Oceanum AI: ${message}`);
     }
+    if (res.status === 401) {
+      throw new Error("Invalid or expired Datamesh token.");
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`Backend error: ${text}`);
+    }
+    const data = (await res.json()) as Partial<OceanumResponse> | null;
+    // Checked rather than cast. The cast was safe only while the contract
+    // never changed; it has (OCE-173), and an extension meeting a backend on
+    // the other side of that change would read `blocks` off a body with none.
+    if (
+      !data ||
+      typeof data.message !== "string" ||
+      !Array.isArray(data.blocks)
+    ) {
+      throw new Error(
+        "Unexpected response from Oceanum AI. It may be running an " +
+          "incompatible version of the chat API.",
+      );
+    }
+    return { message: data.message, blocks: data.blocks };
+  }
 
-    this._post({ command: "chat-response", response });
-
-    // Every block, in the order the agent wrote them. This was a branch over
-    // the response type, because a response was exactly one of text, code or
-    // markdown; it can now carry any number of blocks in any combination, and
-    // `insertContent` already takes exactly a block's shape.
+  /**
+   * Place every block in order -- code as code cells, markdown as markdown
+   * cells -- and, when auto-run is on, run each code cell as it lands and
+   * report what it produced.
+   */
+  private async _place(
+    response: OceanumResponse,
+    autoRun: boolean,
+  ): Promise<{ runs: ObservedRun[] }> {
+    const runs: ObservedRun[] = [];
     for (const block of response.blocks) {
-      await insertContent(block.content, block.type);
+      const index = await insertContent(block.content, block.type);
+      if (block.type === "code" && autoRun && index !== null) {
+        const outcome = await runCellAndHarvest(index);
+        runs.push({ code: block.content, message: "", ...outcome });
+      }
     }
+    return { runs };
   }
 
   private async _getToken(): Promise<string> {

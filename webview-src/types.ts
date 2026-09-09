@@ -46,9 +46,22 @@ export interface ChatMessage {
   content: string;
 }
 
+/**
+ * What one code cell did when it ran, in the shape `/api/chat/observe` takes.
+ * `message` is the agent's explanation for the response that carried the code.
+ */
+export interface ObservedRun {
+  code: string;
+  status: "ok" | "error";
+  stdout: string;
+  error: string | null;
+  message: string;
+}
+
 export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
+  | { command: "chat-stopped" }
   | { command: "chat-error"; message: string };

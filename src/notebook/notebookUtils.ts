@@ -1,5 +1,7 @@
 // Copyright Oceanum Ltd. Apache 2.0
 import * as vscode from "vscode";
+import { harvestOutputs } from "../ai/harvest";
+import type { ObservedRun } from "../types";
 
 /**
  * Insert code or markdown into the active notebook or text editor.
@@ -8,11 +10,10 @@ import * as vscode from "vscode";
 export async function insertContent(
   content: string,
   type: "code" | "markdown",
-): Promise<void> {
+): Promise<number | null> {
   const notebookEditor = vscode.window.activeNotebookEditor;
   if (notebookEditor) {
-    await insertNotebookCell(notebookEditor, content, type);
-    return;
+    return insertNotebookCell(notebookEditor, content, type);
   }
 
   const textEditor = vscode.window.activeTextEditor;
@@ -21,20 +22,22 @@ export async function insertContent(
       const pos = textEditor.selection.active;
       builder.insert(pos, content + "\n");
     });
-    return;
+    // A text editor has no cell to run, so there is nothing to report back.
+    return null;
   }
 
   await vscode.env.clipboard.writeText(content);
   vscode.window.showInformationMessage(
     "No active editor — code copied to clipboard.",
   );
+  return null;
 }
 
 async function insertNotebookCell(
   editor: vscode.NotebookEditor,
   content: string,
   type: "code" | "markdown",
-): Promise<void> {
+): Promise<number> {
   const notebook = editor.notebook;
   const cellKind =
     type === "markdown"
@@ -54,6 +57,30 @@ async function insertNotebookCell(
   // Move selection to the new cell
   editor.selection = new vscode.NotebookRange(insertIndex, insertIndex + 1);
   editor.revealRange(editor.selection);
+  return insertIndex;
+}
+
+/**
+ * Run one cell of the active notebook and report what it produced.
+ *
+ * `notebook.cell.execute` resolves when the kernel has finished, so the
+ * outputs on the cell afterwards are this run's. Reading them is what makes
+ * the iterate workflow possible: it is the only place the kernel's answer can
+ * be seen.
+ */
+export async function runCellAndHarvest(
+  index: number,
+): Promise<Pick<ObservedRun, "status" | "stdout" | "error">> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    return { status: "error", stdout: "", error: "No active notebook." };
+  }
+  await vscode.commands.executeCommand("notebook.cell.execute", {
+    ranges: [{ start: index, end: index + 1 }],
+    document: editor.notebook.uri,
+  });
+  const cell = editor.notebook.cellAt(index);
+  return harvestOutputs(cell.outputs.flatMap((o) => o.items));
 }
 
 /**
