@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { SidebarProvider } from "./providers/SidebarProvider";
 import { DatameshPanel } from "./panels/DatameshPanel";
 import { COMMANDS } from "./commands";
-import { AUTH0_CLIENT_ID, AUTH0_DOMAIN } from "./constants";
+import { AUTH0_AUDIENCE, AUTH0_CLIENT_ID, AUTH0_DOMAIN } from "./constants";
 import {
   requestDeviceCode,
   pollForDeviceToken,
@@ -14,21 +14,6 @@ import type { IWorkspaceSpec } from "./types";
 
 // Refresh slightly before the real expiry to avoid races against in-flight calls.
 const TOKEN_EXPIRY_BUFFER_MS = 60_000;
-
-interface Auth0Config {
-  domain: string;
-  clientId: string;
-  audience: string;
-}
-
-function getAuth0Config(): Auth0Config {
-  const cfg = vscode.workspace.getConfiguration("oceanum");
-  return {
-    domain: cfg.get<string>("auth0Domain") || AUTH0_DOMAIN,
-    clientId: cfg.get<string>("auth0ClientId") || AUTH0_CLIENT_ID,
-    audience: cfg.get<string>("auth0Audience") || "",
-  };
-}
 
 async function storeTokens(
   context: vscode.ExtensionContext,
@@ -78,11 +63,10 @@ async function getValidAccessToken(
     return "";
   }
 
-  const { domain, clientId } = getAuth0Config();
   try {
     const refreshed = await refreshAccessToken({
-      domain,
-      clientId,
+      domain: AUTH0_DOMAIN,
+      clientId: AUTH0_CLIENT_ID,
       refreshToken,
     });
     await storeTokens(context, refreshed);
@@ -133,25 +117,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(COMMANDS.LOGIN, async () => {
-      const {
-        domain: auth0Domain,
-        clientId: auth0ClientId,
-        audience: auth0Audience,
-      } = getAuth0Config();
-
-      if (!auth0ClientId) {
-        vscode.window.showErrorMessage(
-          "Oceanum: auth0ClientId is not configured. Set oceanum.auth0ClientId in settings.",
-        );
-        return;
-      }
-
       let deviceCode;
       try {
         deviceCode = await requestDeviceCode({
-          domain: auth0Domain,
-          clientId: auth0ClientId,
-          audience: auth0Audience || undefined,
+          domain: AUTH0_DOMAIN,
+          clientId: AUTH0_CLIENT_ID,
+          audience: AUTH0_AUDIENCE || undefined,
         });
       } catch (err) {
         vscode.window.showErrorMessage(
@@ -180,8 +151,8 @@ export function activate(context: vscode.ExtensionContext): void {
           async (_progress, token) => {
             token.onCancellationRequested(() => cancellation.abort());
             return pollForDeviceToken({
-              domain: auth0Domain,
-              clientId: auth0ClientId,
+              domain: AUTH0_DOMAIN,
+              clientId: AUTH0_CLIENT_ID,
               deviceCode: deviceCode.device_code,
               intervalSeconds: deviceCode.interval,
               expiresInSeconds: deviceCode.expires_in,
