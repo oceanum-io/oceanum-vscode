@@ -3,82 +3,34 @@ import * as vscode from "vscode";
 import { SidebarProvider } from "./providers/SidebarProvider";
 import { DatameshPanel } from "./panels/DatameshPanel";
 import { COMMANDS } from "./commands";
-import { AUTH0_AUDIENCE, AUTH0_CLIENT_ID, AUTH0_DOMAIN } from "./constants";
-import {
-  requestDeviceCode,
-  pollForDeviceToken,
-  refreshAccessToken,
-  type DeviceTokenResponse,
-} from "./auth/device";
 import type { IWorkspaceSpec } from "./types";
 
-// Refresh slightly before the real expiry to avoid races against in-flight calls.
-const TOKEN_EXPIRY_BUFFER_MS = 60_000;
-
-async function storeTokens(
+/**
+ * Drop the credentials the Auth0 device login stored before 0.4.0.
+ *
+ * The extension authenticates with the Datamesh token alone, so an access and
+ * refresh token from an earlier version are credentials with no owner: nothing
+ * reads them, and a refresh token stays usable until it is revoked. Deleting a
+ * key that is not there is a no-op, so this costs three lookups once per
+ * session and is safe to run forever.
+ */
+async function clearLegacyAuth0Secrets(
   context: vscode.ExtensionContext,
-  token: DeviceTokenResponse,
 ): Promise<void> {
-  await context.secrets.store("oceanum.accessToken", token.access_token);
-  if (token.refresh_token) {
-    await context.secrets.store("oceanum.refreshToken", token.refresh_token);
-  }
-  await context.secrets.store(
-    "oceanum.accessTokenExpiry",
-    String(Date.now() + token.expires_in * 1000),
-  );
-}
-
-async function clearTokens(context: vscode.ExtensionContext): Promise<void> {
   await context.secrets.delete("oceanum.accessToken");
   await context.secrets.delete("oceanum.refreshToken");
   await context.secrets.delete("oceanum.accessTokenExpiry");
 }
 
-async function isAccessTokenExpired(
-  context: vscode.ExtensionContext,
-): Promise<boolean> {
-  const raw = await context.secrets.get("oceanum.accessTokenExpiry");
-  const expiry = Number(raw);
-  // No/!finite expiry → token predates expiry tracking; don't trust it.
-  if (!Number.isFinite(expiry)) return true;
-  return Date.now() >= expiry - TOKEN_EXPIRY_BUFFER_MS;
-}
-
-/**
- * Returns a usable access token, refreshing a stale one when possible.
- * Returns "" if there is no token, or it expired and could not be refreshed
- * (stale tokens are cleared so the caller can fall back to device login).
- */
-async function getValidAccessToken(
-  context: vscode.ExtensionContext,
-): Promise<string> {
-  const accessToken = (await context.secrets.get("oceanum.accessToken")) ?? "";
-  if (!accessToken) return "";
-  if (!(await isAccessTokenExpired(context))) return accessToken;
-
-  const refreshToken = await context.secrets.get("oceanum.refreshToken");
-  if (!refreshToken) {
-    await clearTokens(context);
-    return "";
-  }
-
-  try {
-    const refreshed = await refreshAccessToken({
-      domain: AUTH0_DOMAIN,
-      clientId: AUTH0_CLIENT_ID,
-      refreshToken,
-    });
-    await storeTokens(context, refreshed);
-    return refreshed.access_token;
-  } catch (err) {
-    console.log("[oceanum-debug] token refresh failed:", String(err));
-    await clearTokens(context);
-    return "";
-  }
-}
-
 export function activate(context: vscode.ExtensionContext): void {
+  clearLegacyAuth0Secrets(context).catch((err: unknown) => {
+    // Secret storage is not always there: Linux without a working keyring,
+    // some remote sessions. Failing to delete credentials nothing reads is not
+    // worth failing activation over, but it should not be a silent unhandled
+    // rejection either.
+    console.warn("[oceanum] could not clear legacy Auth0 secrets:", err);
+  });
+
   const sidebarProvider = new SidebarProvider(context);
 
   context.subscriptions.push(
@@ -102,88 +54,12 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.workspace
           .getConfiguration("oceanum")
           .get<string>("datameshToken", "");
-      const accessToken = await getValidAccessToken(context);
-      DatameshPanel.createOrShow(
-        context,
-        onWorkspaceModify,
-        datameshToken,
-        accessToken,
-      );
-      if (!accessToken) {
-        await vscode.commands.executeCommand(COMMANDS.LOGIN);
+      DatameshPanel.createOrShow(context, onWorkspaceModify, datameshToken);
+      if (!datameshToken) {
+        // The nudge the device login used to give, pointed at the credential
+        // the panel actually needs.
+        await vscode.commands.executeCommand(COMMANDS.SET_TOKEN);
       }
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(COMMANDS.LOGIN, async () => {
-      let deviceCode;
-      try {
-        deviceCode = await requestDeviceCode({
-          domain: AUTH0_DOMAIN,
-          clientId: AUTH0_CLIENT_ID,
-          audience: AUTH0_AUDIENCE || undefined,
-        });
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Oceanum: failed to start device login — ${String(err)}`,
-        );
-        return;
-      }
-
-      console.log(
-        "[oceanum-debug] LOGIN: got device code, user_code:",
-        deviceCode.user_code,
-      );
-
-      const cancellation = new AbortController();
-      await vscode.env.openExternal(
-        vscode.Uri.parse(deviceCode.verification_uri_complete),
-      );
-
-      try {
-        const tokenResponse = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Oceanum sign-in — confirm code ${deviceCode.user_code} in your browser`,
-            cancellable: true,
-          },
-          async (_progress, token) => {
-            token.onCancellationRequested(() => cancellation.abort());
-            return pollForDeviceToken({
-              domain: AUTH0_DOMAIN,
-              clientId: AUTH0_CLIENT_ID,
-              deviceCode: deviceCode.device_code,
-              intervalSeconds: deviceCode.interval,
-              expiresInSeconds: deviceCode.expires_in,
-              signal: cancellation.signal,
-            });
-          },
-        );
-        console.log(
-          "[oceanum-debug] LOGIN: got access_token, length:",
-          tokenResponse.access_token.length,
-          "panel exists:",
-          !!DatameshPanel.instance,
-        );
-        await storeTokens(context, tokenResponse);
-        DatameshPanel.instance?.updateAccessToken(tokenResponse.access_token);
-        vscode.window.showInformationMessage(
-          "Oceanum: signed in successfully.",
-        );
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Oceanum: login failed — ${String(err)}`,
-        );
-      }
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(COMMANDS.SIGN_OUT, async () => {
-      await clearTokens(context);
-      DatameshPanel.instance?.updateAccessToken("");
-      vscode.window.showInformationMessage("Oceanum: signed out.");
     }),
   );
 
