@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   activeNotebookEditor: undefined as unknown,
+  onClose: undefined as ((notebook: unknown) => void) | undefined,
 }));
 
 vi.mock("vscode", () => ({
@@ -19,6 +20,10 @@ vi.mock("vscode", () => ({
       get: (_key: string, fallback: unknown) => fallback,
     }),
     applyEdit: vi.fn(async () => true),
+    onDidCloseNotebookDocument: (listener: (notebook: unknown) => void) => {
+      state.onClose = listener;
+      return { dispose() {} };
+    },
   },
   commands: { executeCommand: vi.fn() },
   env: { clipboard: { writeText: vi.fn() } },
@@ -103,6 +108,7 @@ const settle = async () => {
 beforeEach(() => {
   requests.length = 0;
   state.activeNotebookEditor = undefined;
+  state.onClose = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn((_url: string, init: { body: string; signal: AbortSignal }) => {
@@ -144,6 +150,21 @@ describe("New chat", () => {
       command: "chat-context",
       notebook: "a.ipynb",
     });
+  });
+
+  it("ends a request that is still reading the token", async () => {
+    // The request used to become the current run only after the token was
+    // read, so New chat in that gap ended nothing: the old conversation's
+    // request ran on regardless and placed its cells in the notebook.
+    state.activeNotebookEditor = editor(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(requests).toHaveLength(0);
+    expect(posted.map((m) => m.command)).toEqual(["chat-context"]);
   });
 
   it("differs from Stop, which does report the stop", async () => {
@@ -205,7 +226,25 @@ describe("the pinned notebook", () => {
     ]);
   });
 
-  it("stops being sent once closed, and the panel is told", async () => {
+  it("is dropped the moment it is closed, and the panel is told", () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    const b = notebook("b.ipynb", [[CODE, "y = 2"]]);
+    state.activeNotebookEditor = editor(a);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+
+    // Another notebook closing changes nothing.
+    state.onClose?.(b);
+    expect(posted.at(-1)).toEqual({
+      command: "chat-context",
+      notebook: "a.ipynb",
+    });
+
+    state.onClose?.(a);
+    expect(posted.at(-1)).toEqual({ command: "chat-context", notebook: null });
+  });
+
+  it("stops being sent once closed", async () => {
     const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
     state.activeNotebookEditor = editor(a);
     const { posted, send } = openPanel();

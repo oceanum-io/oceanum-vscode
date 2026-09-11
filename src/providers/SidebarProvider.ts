@@ -67,6 +67,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._disposables,
     );
 
+    // A pinned notebook that closes is dropped at once rather than at the next
+    // message, so the panel stops showing it as the context straight away.
+    vscode.workspace.onDidCloseNotebookDocument(
+      (closed) => {
+        if (closed === this._pinned) {
+          this._pinned = null;
+          this._post({ command: "chat-context", notebook: null });
+        }
+      },
+      null,
+      this._disposables,
+    );
+
     webviewView.onDidDispose(() => {
       // The Stop button went with the view; a run left going would keep
       // executing cells in the kernel with nothing able to halt it.
@@ -162,10 +175,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case "chat-new": {
         // End the run in flight WITHOUT a "Stopped." -- that belongs to the
-        // conversation being thrown away. Clearing `_current` before aborting
-        // is what silences it: the loop stops at the abort before showing
-        // another round, and the run's ending only reports while it is still
-        // the current run.
+        // conversation being thrown away. Clearing `_current` is what
+        // silences it: the loop stops at the abort before showing another
+        // round, and everything the run posts after that first checks that it
+        // is still the current run.
         const run = this._current;
         this._current = undefined;
         run?.abort();
@@ -179,51 +192,59 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     prompt: string,
     chatHistory: ChatMessage[],
   ): Promise<void> {
-    const token = await this._getToken();
-    if (!token) {
-      this._post({
-        command: "chat-error",
-        message: "Datamesh token not configured.",
-      });
-      return;
-    }
-
-    // A conversation nobody started with New chat starts at its first
-    // message, the same way.
-    if (this._pinned === undefined) {
-      this._pin();
-    } else if (this._pinned?.isClosed) {
-      // Closed since it was pinned: say so, rather than keep claiming it.
-      this._pinned = null;
-      this._post({ command: "chat-context", notebook: null });
-    }
-    const notebook = this._pinned;
-    const cells = notebook ? notebookCellsOf(notebook) : [];
-    const activeCell = notebook ? activeCellSourceIn(notebook) : null;
-
-    const payload: Record<string, unknown> = { prompt };
-    if (chatHistory.length > 0) {
-      payload.chatHistory = chatHistory;
-    }
-    if (cells.length > 0) {
-      payload.notebookCells = cells;
-    }
-    if (activeCell) {
-      payload[activeCell.isCode ? "codeContext" : "context"] =
-        activeCell.source;
-    }
-
-    // Read per prompt, not once at activation, so a settings change applies
-    // to the next question without a reload.
-    const cfg = vscode.workspace.getConfiguration("oceanum");
-    const autoRunCode = cfg.get<boolean>("autoRunCode", false);
-    const iterate = cfg.get<boolean>("iterate", false);
-
+    // Become the current run BEFORE the first await. New chat can land while
+    // the token is still being read, and it can only end a run it can see:
+    // registered after the read, the request ran to completion regardless and
+    // placed its cells in the notebook.
     this._current?.abort();
     const controller = new AbortController();
     this._current = controller;
 
     try {
+      const token = await this._getToken();
+      // Replaced -- by New chat, or a newer request -- while reading it.
+      if (this._current !== controller) {
+        return;
+      }
+      if (!token) {
+        this._post({
+          command: "chat-error",
+          message: "Datamesh token not configured.",
+        });
+        return;
+      }
+
+      // A conversation nobody started with New chat starts at its first
+      // message, the same way.
+      if (this._pinned === undefined) {
+        this._pin();
+      } else if (this._pinned?.isClosed) {
+        // Closed since it was pinned: say so, rather than keep claiming it.
+        this._pinned = null;
+        this._post({ command: "chat-context", notebook: null });
+      }
+      const notebook = this._pinned;
+      const cells = notebook ? notebookCellsOf(notebook) : [];
+      const activeCell = notebook ? activeCellSourceIn(notebook) : null;
+
+      const payload: Record<string, unknown> = { prompt };
+      if (chatHistory.length > 0) {
+        payload.chatHistory = chatHistory;
+      }
+      if (cells.length > 0) {
+        payload.notebookCells = cells;
+      }
+      if (activeCell) {
+        payload[activeCell.isCode ? "codeContext" : "context"] =
+          activeCell.source;
+      }
+
+      // Read per prompt, not once at activation, so a settings change applies
+      // to the next question without a reload.
+      const cfg = vscode.workspace.getConfiguration("oceanum");
+      const autoRunCode = cfg.get<boolean>("autoRunCode", false);
+      const iterate = cfg.get<boolean>("iterate", false);
+
       const outcome = await runChatLoop(
         prompt,
         chatHistory,

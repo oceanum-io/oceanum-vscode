@@ -3,14 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
 import type { ChatMessage, ExtToWebviewMessage } from "../types";
 import { type Message, responseToMessage } from "../responseToMessage";
-
-// Messages that belong to a chat run, as opposed to panel state.
-const RUN_MESSAGES = new Set<ExtToWebviewMessage["command"]>([
-  "chat-response",
-  "chat-done",
-  "chat-stopped",
-  "chat-error",
-]);
+import { isStaleRunMessage } from "../runMessages";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -21,26 +14,21 @@ export function ChatPanel(): React.ReactElement {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedInput, setSavedInput] = useState("");
   // The notebook this conversation is pinned to, as the extension reports it:
-  // undefined until the conversation starts, null when it has no notebook.
+  // undefined until the conversation starts, null when it has none.
   const [context, setContext] = useState<string | null | undefined>(undefined);
-  // False from New chat until the next request. A message from the run that
-  // New chat replaced can already be on its way when the button is pressed:
-  // the extension stops posting for that run, but cannot recall what it has
-  // already sent, and it must not land in the new conversation.
+  // False from New chat until the next request; see isStaleRunMessage.
   const acceptRun = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const msg = event.data as ExtToWebviewMessage;
+      if (isStaleRunMessage(msg, acceptRun.current)) {
+        return;
+      }
       if (msg.command === "chat-context") {
         setContext(msg.notebook);
-        return;
-      }
-      if (!acceptRun.current && RUN_MESSAGES.has(msg.command)) {
-        return;
-      }
-      if (msg.command === "chat-response") {
+      } else if (msg.command === "chat-response") {
         // One bubble per round. The run may still be placing, running and
         // observing cells, so this does not end "loading": Stop must stay
         // available until "chat-done".
