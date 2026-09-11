@@ -17,10 +17,17 @@ import {
 import {
   insertContent,
   getNotebookCells,
-  getActiveCellSource,
+  notebookCellsOf,
+  activeCellSourceIn,
   runCellAndHarvest,
 } from "../notebook/notebookUtils";
 import { runChatLoop, type PlacedResponse } from "../ai/loop";
+
+/** A notebook's file name, for the panel to show. */
+function notebookName(notebook: vscode.NotebookDocument): string {
+  const path = notebook.uri.path;
+  return path.slice(path.lastIndexOf("/") + 1);
+}
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view: vscode.WebviewView | undefined;
@@ -31,6 +38,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _cachedToken: string | undefined;
   // The chat run in flight, if any; "chat-stop" aborts it.
   private _current: AbortController | undefined;
+  // The notebook the current conversation is about: undefined until the
+  // conversation starts, null when it has none. Pinned when it starts -- New
+  // chat, or the first message -- from the ACTIVE TAB, and kept for the whole
+  // conversation, so switching tabs mid-thread does not change what the agent
+  // is shown.
+  private _pinned: vscode.NotebookDocument | null | undefined;
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -58,6 +71,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // The Stop button went with the view; a run left going would keep
       // executing cells in the kernel with nothing able to halt it.
       this._current?.abort();
+      // The conversation went with it too: a new view starts a new one.
+      this._pinned = undefined;
       this._view = undefined;
       this._disposables.forEach((d) => d.dispose());
       this._disposables = [];
@@ -93,6 +108,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private _post(msg: ExtToWebviewMessage): void {
     this._view?.webview.postMessage(msg);
+  }
+
+  /** Pin the notebook in the active tab, if any, as the conversation's. */
+  private _pin(): void {
+    this._pinned = vscode.window.activeNotebookEditor?.notebook ?? null;
+    this._post({
+      command: "chat-context",
+      notebook: this._pinned ? notebookName(this._pinned) : null,
+    });
   }
 
   private async _handleMessage(msg: WebviewToExtMessage): Promise<void> {
@@ -135,6 +159,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "chat-stop":
         this._current?.abort();
         break;
+
+      case "chat-new": {
+        // End the run in flight WITHOUT a "Stopped." -- that belongs to the
+        // conversation being thrown away. Clearing `_current` before aborting
+        // is what silences it: the loop stops at the abort before showing
+        // another round, and the run's ending only reports while it is still
+        // the current run.
+        const run = this._current;
+        this._current = undefined;
+        run?.abort();
+        this._pin();
+        break;
+      }
     }
   }
 
@@ -151,8 +188,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const cells = getNotebookCells();
-    const activeCell = getActiveCellSource();
+    // A conversation nobody started with New chat starts at its first
+    // message, the same way.
+    if (this._pinned === undefined) {
+      this._pin();
+    } else if (this._pinned?.isClosed) {
+      // Closed since it was pinned: say so, rather than keep claiming it.
+      this._pinned = null;
+      this._post({ command: "chat-context", notebook: null });
+    }
+    const notebook = this._pinned;
+    const cells = notebook ? notebookCellsOf(notebook) : [];
+    const activeCell = notebook ? activeCellSourceIn(notebook) : null;
 
     const payload: Record<string, unknown> = { prompt };
     if (chatHistory.length > 0) {

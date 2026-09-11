@@ -2,6 +2,7 @@
 import * as vscode from "vscode";
 import { harvestOutputs } from "../ai/harvest";
 import type { ObservedRun } from "../types";
+import { formatNotebookCells, type ContextCell } from "./cellContext";
 
 /**
  * Insert code or markdown into the active notebook or text editor.
@@ -163,6 +164,18 @@ export function getNotebookCells(): string[] {
 }
 
 /**
+ * The cells of `notebook` as chat context: code and markdown, in order. See
+ * formatNotebookCells for the shape and for how the server's limits are kept.
+ */
+export function notebookCellsOf(notebook: vscode.NotebookDocument): string[] {
+  const cells: ContextCell[] = notebook.getCells().map((cell) => ({
+    kind: cell.kind === vscode.NotebookCellKind.Code ? "code" : "markdown",
+    source: cell.document.getText(),
+  }));
+  return formatNotebookCells(cells);
+}
+
+/**
  * Get the source of the currently selected notebook cell (if any).
  */
 export function getActiveCellSource(): {
@@ -184,4 +197,20 @@ export function getActiveCellSource(): {
     source: cell.document.getText(),
     isCode: cell.kind === vscode.NotebookCellKind.Code,
   };
+}
+
+/**
+ * The selected cell of `notebook` -- but only while it is the active notebook.
+ *
+ * Answers are placed in the active notebook, and the server treats a selected
+ * code cell as the one its answer replaces. Taken from any other notebook,
+ * that would ask for an edit to one notebook and deliver it into another.
+ */
+export function activeCellSourceIn(
+  notebook: vscode.NotebookDocument,
+): { source: string; isCode: boolean } | null {
+  if (vscode.window.activeNotebookEditor?.notebook !== notebook) {
+    return null;
+  }
+  return getActiveCellSource();
 }

@@ -55,4 +55,7 @@ export type ExtToWebviewMessage =
   // run is its own message; the webview stays "thinking" until one of these.
   | { command: "chat-done" }
   | { command: "chat-stopped" }
-  | { command: "chat-error"; message: string };
+  | { command: "chat-error"; message: string }
+  // The notebook the current conversation is pinned to, by file name, or null
+  // when it has none. Sent whenever the pin changes.
+  | { command: "chat-context"; notebook: string | null };
