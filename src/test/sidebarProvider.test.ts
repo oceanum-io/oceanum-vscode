@@ -49,6 +49,8 @@ const state = vi.hoisted(() => {
     renameListeners: [] as Array<
       (event: { files: Array<{ oldUri: FakeUri; newUri: FakeUri }> }) => void
     >,
+    openListeners: [] as Array<(notebook: FakeNotebook) => void>,
+    closeListeners: [] as Array<(notebook: FakeNotebook) => void>,
     fake: undefined as
       | {
           notebook(path: string, scheme?: string): FakeNotebook;
@@ -143,6 +145,7 @@ vi.mock("vscode", () => {
             "untitled",
           );
           state.documents.push(fresh);
+          state.openListeners.forEach((listener) => listener(fresh));
           return fresh;
         }
         const found = state.onDisk.get((what as FakeUri).path);
@@ -152,6 +155,7 @@ vi.mock("vscode", () => {
         found.isClosed = false;
         if (!state.documents.includes(found)) {
           state.documents.push(found);
+          state.openListeners.forEach((listener) => listener(found));
         }
         return found;
       }),
@@ -177,6 +181,14 @@ vi.mock("vscode", () => {
       ),
       onDidRenameFiles: (listener: (typeof state.renameListeners)[number]) => {
         state.renameListeners.push(listener);
+        return { dispose() {} };
+      },
+      onDidOpenNotebookDocument: (listener: (nb: FakeNotebook) => void) => {
+        state.openListeners.push(listener);
+        return { dispose() {} };
+      },
+      onDidCloseNotebookDocument: (listener: (nb: FakeNotebook) => void) => {
+        state.closeListeners.push(listener);
         return { dispose() {} };
       },
     },
@@ -309,6 +321,7 @@ function editor(nb: FakeNotebook, selected?: number): FakeEditor {
 function activate(nb: FakeNotebook, selected?: number): void {
   if (!state.documents.includes(nb)) {
     state.documents.push(nb);
+    state.openListeners.forEach((listener) => listener(nb));
   }
   if (nb.uri.scheme === "file") {
     state.onDisk.set(nb.uri.path, nb);
@@ -324,6 +337,7 @@ function close(nb: FakeNotebook): void {
   if (state.activeNotebookEditor?.notebook === nb) {
     state.activeNotebookEditor = undefined;
   }
+  state.closeListeners.forEach((listener) => listener(nb));
 }
 
 /** Rename or move the file or folder at `from` to `to`, as the explorer does. */
@@ -346,18 +360,51 @@ function move(from: string, to: string): void {
   }
 }
 
+/**
+ * Save the untitled `nb` as a file, as VS Code does: a file notebook with the
+ * same cells opens in its tab and the untitled one closes, with no rename
+ * event.
+ */
+function saveAs(
+  nb: FakeNotebook,
+  path: string,
+  order: "open-first" | "close-first" = "open-first",
+): FakeNotebook {
+  const saved = new FakeNotebook(
+    state.uri("file", path),
+    nb.cells.map((cell): [number, string] => [
+      cell.kind,
+      cell.document.getText(),
+    ]),
+  );
+  if (order === "open-first") {
+    activate(saved);
+    close(nb);
+  } else {
+    close(nb);
+    activate(saved);
+  }
+  return saved;
+}
+
 type Posted = { command: string; [key: string]: unknown };
 
 function openPanel() {
   const posted: Posted[] = [];
   let receive: (msg: unknown) => void = () => {};
+  let visible = true;
+  let visibilityChanged: () => void = () => {};
   const view = {
     webview: {
       options: {},
       html: "",
       cspSource: "",
       asWebviewUri: (uri: unknown) => uri,
+      // A hidden view receives nothing, as in VS Code.
       postMessage: (msg: Posted) => {
+        if (!visible) {
+          return Promise.resolve(false);
+        }
         posted.push(msg);
         return Promise.resolve(true);
       },
@@ -367,13 +414,27 @@ function openPanel() {
       },
     },
     onDidDispose: () => ({ dispose() {} }),
+    get visible() {
+      return visible;
+    },
+    onDidChangeVisibility: (listener: () => void) => {
+      visibilityChanged = listener;
+      return { dispose() {} };
+    },
   };
   const provider = new SidebarProvider({
     extensionUri: state.uri("file", "/extension"),
     secrets: { get: async () => "a-token" },
   } as never);
   provider.resolveWebviewView(view as never, {} as never, {} as never);
-  return { posted, send: (msg: unknown) => receive(msg) };
+  return {
+    posted,
+    send: (msg: unknown) => receive(msg),
+    setVisible: (shown: boolean) => {
+      visible = shown;
+      visibilityChanged();
+    },
+  };
 }
 
 const contexts = (posted: Posted[]) =>
@@ -406,6 +467,8 @@ beforeEach(() => {
   state.inserted = [];
   state.afterInsert = undefined;
   state.renameListeners = [];
+  state.openListeners = [];
+  state.closeListeners = [];
   state.fake = {
     notebook: (path, scheme = "file") => notebook(path, [], scheme),
     editor: (nb) => editors.get(nb) ?? editor(nb),
@@ -427,6 +490,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("New chat", () => {
@@ -539,7 +603,8 @@ describe("a notebook created for a chat", () => {
     send({ command: "chat-new" });
     await settle();
 
-    expect(state.written).toEqual(["/work/src/Untitled2.ipynb"]);
+    // Untitled1, as Jupyter numbers them: not Untitled2.
+    expect(state.written).toEqual(["/work/src/Untitled1.ipynb"]);
   });
 
   it("goes in the workspace folder when the active file is outside it", async () => {
@@ -843,5 +908,105 @@ describe("placing an answer", () => {
     ]);
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "Untitled-2.ipynb"]);
     expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
+});
+
+describe("an untitled notebook saved as a file", () => {
+  it("stays the conversation's notebook, with its cells and its answers", async () => {
+    // The usual way to start a notebook in VS Code. Saving gives it a new
+    // URI, and no rename event says so.
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+    activate(u);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    saveAs(u, "/work/analysis.ipynb");
+    send({ command: "chat-request", prompt: "more", chatHistory: [] });
+    await settle();
+    expect(requests[0].body.notebookCells).toEqual(["x = 1"]);
+    respond({ message: "Here.", blocks: [code("y = x")] });
+    await settle();
+
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "analysis.ipynb"]);
+    expect(state.inserted.map((i) => i.path)).toEqual(["/work/analysis.ipynb"]);
+    expect(state.written).toEqual([]);
+    expect(state.created).toBe(0);
+  });
+
+  it("is followed whichever order the copy opens and the original closes in", async () => {
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+    activate(u);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    saveAs(u, "/work/analysis.ipynb", "close-first");
+
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "analysis.ipynb"]);
+  });
+
+  it("is followed by a run waiting for its answer", async () => {
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+    activate(u);
+    const { send } = openPanel();
+
+    send({ command: "chat-request", prompt: "plot", chatHistory: [] });
+    await settle();
+    saveAs(u, "/work/analysis.ipynb");
+    respond({ message: "Here.", blocks: [code("ds.plot()")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.path)).toEqual(["/work/analysis.ipynb"]);
+    expect(state.created).toBe(0);
+  });
+
+  it("is not mistaken, when discarded, for a notebook with the same cells opened earlier", async () => {
+    // Discarding closes an untitled notebook too. A matching notebook that
+    // opened long before is not its copy.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const { posted, send } = openPanel();
+    activate(notebook("other.ipynb", [[CODE, "x = 1"]]));
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+    activate(u);
+    send({ command: "chat-new" });
+    await settle();
+
+    vi.setSystemTime(60_000);
+    close(u);
+
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
+  });
+
+  it("is not mistaken, when discarded, for a notebook with other cells opened at once", async () => {
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+    activate(u);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    close(u);
+    activate(notebook("other.ipynb", [[CODE, "y = 2"]]));
+
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
+  });
+});
+
+describe("the context label", () => {
+  it("is sent again when the view is shown, since a hidden view receives nothing", async () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    activate(a);
+    const { posted, send, setVisible } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    setVisible(false);
+    move("/work/a.ipynb", "/work/renamed.ipynb");
+    expect(contexts(posted)).toEqual(["a.ipynb"]);
+
+    setVisible(true);
+    expect(contexts(posted)).toEqual(["a.ipynb", "renamed.ipynb"]);
   });
 });

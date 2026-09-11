@@ -20,7 +20,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   the first workspace folder, else untitled when no folder is open. The panel
   shows its name. Its cells are the chat's context, and every answer's cells go
   into it whichever tab is in front: it is brought to the front, opened again
-  if it was closed, and followed if it is renamed or moved. If it was deleted,
+  if it was closed, and followed if it is renamed, moved, or saved from untitled. If it was deleted,
   a new notebook takes its place when an answer has cells to place.
 - Answers go below the selected cell when you are working in the chat's
   notebook, and at its end otherwise. Focus stays in the chat.

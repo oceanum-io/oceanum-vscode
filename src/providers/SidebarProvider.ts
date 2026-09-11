@@ -46,6 +46,17 @@ function movedTo(
     : undefined;
 }
 
+/** A notebook's cells, to recognise the file an untitled notebook became. */
+function cellsOf(notebook: vscode.NotebookDocument): string {
+  return JSON.stringify(
+    notebook.getCells().map((cell) => [cell.kind, cell.document.getText()]),
+  );
+}
+
+// How close together an untitled notebook's closing and a file notebook's
+// opening must be for the file to be taken as its saved copy.
+const SAVE_WINDOW_MS = 10_000;
+
 // The smallest valid notebook. Naming Python lets the editor offer Python
 // kernels straight away.
 const EMPTY_NOTEBOOK = `${JSON.stringify(
@@ -75,12 +86,15 @@ function folderForNewNotebook(): vscode.Uri | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri;
 }
 
-/** An empty notebook file under `folder`, named like Jupyter's. */
+/**
+ * An empty notebook file under `folder`, named as Jupyter names them:
+ * Untitled.ipynb, then Untitled1.ipynb, Untitled2.ipynb and so on.
+ */
 async function writeNewNotebook(folder: vscode.Uri): Promise<vscode.Uri> {
-  for (let n = 1; ; n += 1) {
+  for (let n = 0; ; n += 1) {
     const uri = vscode.Uri.joinPath(
       folder,
-      n === 1 ? "Untitled.ipynb" : `Untitled${n}.ipynb`,
+      n === 0 ? "Untitled.ipynb" : `Untitled${n}.ipynb`,
     );
     try {
       await vscode.workspace.fs.stat(uri);
@@ -97,10 +111,10 @@ async function writeNewNotebook(folder: vscode.Uri): Promise<vscode.Uri> {
 /**
  * A new notebook, shown as the active tab with focus left in the chat.
  *
- * Written as a FILE wherever there is somewhere to put it. An untitled buffer
- * gets a new URI when it is saved and the untitled document is closed, so a
- * conversation pinned to it would lose its notebook at the first save. Only
- * with no folder open is the notebook untitled.
+ * Written as a FILE wherever there is somewhere to put it. An untitled
+ * notebook gets a new URI when it is saved, and the chat then has to
+ * recognise the saved copy by its cells (see _followSave); a file needs no
+ * such guess. Only with no folder open is the notebook untitled.
  */
 async function createNotebook(): Promise<vscode.NotebookDocument> {
   const folder = folderForNewNotebook();
@@ -140,6 +154,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // time: a second New chat must find the notebook the first one created as
   // the active tab rather than create another.
   private _starting: Promise<void> = Promise.resolve();
+  // When each notebook was opened, recently: saving an untitled notebook
+  // opens its file copy at about the moment the untitled one closes.
+  private _openedAt = new Map<string, number>();
+  // The conversation's untitled notebook, just closed, until its saved copy
+  // turns up.
+  private _closedUntitled:
+    { uri: string; cells: string; at: number } | undefined;
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -181,6 +202,58 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (target && this._target) {
             this._target.uri = target;
           }
+        }
+      },
+      null,
+      this._disposables,
+    );
+
+    // Saving an untitled notebook closes it and opens a file notebook with
+    // the same cells in its tab, and no rename event says so. The pin, and a
+    // run waiting for its answer, go with it.
+    vscode.workspace.onDidOpenNotebookDocument(
+      (notebook) => {
+        const now = Date.now();
+        for (const [uri, at] of this._openedAt) {
+          if (now - at > SAVE_WINDOW_MS) {
+            this._openedAt.delete(uri);
+          }
+        }
+        this._openedAt.set(notebook.uri.toString(), now);
+        this._followSave();
+      },
+      null,
+      this._disposables,
+    );
+    vscode.workspace.onDidCloseNotebookDocument(
+      (notebook) => {
+        const uri = notebook.uri.toString();
+        if (
+          notebook.uri.scheme === "untitled" &&
+          (this._pinned?.toString() === uri ||
+            this._target?.uri.toString() === uri)
+        ) {
+          this._closedUntitled = {
+            uri,
+            cells: cellsOf(notebook),
+            at: Date.now(),
+          };
+          this._followSave();
+        }
+      },
+      null,
+      this._disposables,
+    );
+
+    // A hidden view receives nothing, so a rename made meanwhile never
+    // reached the label: say it again when the view is shown.
+    webviewView.onDidChangeVisibility(
+      () => {
+        if (webviewView.visible && this._pinned) {
+          this._post({
+            command: "chat-context",
+            notebook: notebookName(this._pinned),
+          });
         }
       },
       null,
@@ -252,6 +325,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       command: "chat-context",
       notebook: notebookName(notebook.uri),
     });
+  }
+
+  /**
+   * Move the pin, and a run waiting for its answer, to the file an untitled
+   * notebook of theirs was just saved as, once that file notebook is open:
+   * one opened within SAVE_WINDOW_MS of the untitled one closing, with the
+   * same cells. Both, so that discarding an untitled notebook does not pin
+   * some other notebook that happens to hold the same cells.
+   */
+  private _followSave(): void {
+    const closed = this._closedUntitled;
+    if (!closed) {
+      return;
+    }
+    if (Date.now() - closed.at > SAVE_WINDOW_MS) {
+      this._closedUntitled = undefined;
+      return;
+    }
+    const saved = vscode.workspace.notebookDocuments.find((n) => {
+      const at = this._openedAt.get(n.uri.toString());
+      return (
+        !n.isClosed &&
+        n.uri.scheme !== "untitled" &&
+        at !== undefined &&
+        Math.abs(at - closed.at) <= SAVE_WINDOW_MS &&
+        cellsOf(n) === closed.cells
+      );
+    });
+    if (!saved) {
+      return;
+    }
+    this._closedUntitled = undefined;
+    if (this._pinned?.toString() === closed.uri) {
+      this._pin(saved);
+    }
+    if (this._target?.uri.toString() === closed.uri) {
+      this._target.uri = saved.uri;
+    }
   }
 
   /**
