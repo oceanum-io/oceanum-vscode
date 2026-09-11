@@ -110,7 +110,16 @@ async function writeNewNotebook(folder: vscode.Uri): Promise<vscode.Uri> {
     );
     try {
       await vscode.workspace.fs.stat(uri);
-    } catch {
+    } catch (err) {
+      // Only "there is nothing there" makes this name free. Any other failure
+      // -- a remote or virtual file system answering badly, say -- must not be
+      // read as an empty slot: writeFile REPLACES a file's contents, so the
+      // user's own notebook would be emptied.
+      const notFound =
+        err instanceof vscode.FileSystemError && err.code === "FileNotFound";
+      if (!notFound) {
+        throw err;
+      }
       await vscode.workspace.fs.writeFile(
         uri,
         new TextEncoder().encode(EMPTY_NOTEBOOK),
