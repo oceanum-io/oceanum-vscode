@@ -64,7 +64,10 @@ export type WebviewToExtMessage =
   | { command: "get-token-status" }
   | { command: "get-notebook-context" }
   | { command: "chat-request"; prompt: string; chatHistory: ChatMessage[] }
-  | { command: "chat-stop" };
+  | { command: "chat-stop" }
+  // Start a new conversation: end any run in flight WITHOUT reporting it, and
+  // pin the notebook in the active tab (if any) as the conversation's context.
+  | { command: "chat-new" };
 
 // Messages sent from extension host → sidebar webview
 export type ExtToWebviewMessage =
@@ -76,4 +79,7 @@ export type ExtToWebviewMessage =
   // run is its own message; the webview stays "thinking" until one of these.
   | { command: "chat-done" }
   | { command: "chat-stopped" }
-  | { command: "chat-error"; message: string };
+  | { command: "chat-error"; message: string }
+  // The notebook the current conversation is pinned to, by file name, or null
+  // when it has none. Sent whenever the pin changes.
+  | { command: "chat-context"; notebook: string | null };

@@ -2,6 +2,7 @@
 import * as vscode from "vscode";
 import { harvestOutputs } from "../ai/harvest";
 import type { ObservedRun } from "../types";
+import { formatNotebookCells, type ContextCell } from "./cellContext";
 
 /**
  * Insert code or markdown into the active notebook or text editor.
@@ -37,7 +38,11 @@ export async function insertContent(
   return null;
 }
 
-async function insertNotebookCell(
+/**
+ * Insert one cell into the notebook `editor` is showing, below its selection,
+ * and select it.
+ */
+export async function insertNotebookCell(
   editor: vscode.NotebookEditor,
   content: string,
   type: "code" | "markdown",
@@ -163,6 +168,18 @@ export function getNotebookCells(): string[] {
 }
 
 /**
+ * The cells of `notebook` as chat context: code and markdown, in order. See
+ * formatNotebookCells for the shape and for how the server's limits are kept.
+ */
+export function notebookCellsOf(notebook: vscode.NotebookDocument): string[] {
+  const cells: ContextCell[] = notebook.getCells().map((cell) => ({
+    kind: cell.kind === vscode.NotebookCellKind.Code ? "code" : "markdown",
+    source: cell.document.getText(),
+  }));
+  return formatNotebookCells(cells);
+}
+
+/**
  * Get the source of the currently selected notebook cell (if any).
  */
 export function getActiveCellSource(): {
@@ -180,6 +197,27 @@ export function getActiveCellSource(): {
   }
 
   const cell = editor.notebook.cellAt(selection.start);
+  return {
+    source: cell.document.getText(),
+    isCode: cell.kind === vscode.NotebookCellKind.Code,
+  };
+}
+
+/**
+ * The selected cell of `notebook`, from whichever editor is showing it, or
+ * null when no editor shows it or nothing is selected.
+ */
+export function selectedCellIn(
+  notebook: vscode.NotebookDocument,
+): { source: string; isCode: boolean } | null {
+  const editor = [
+    vscode.window.activeNotebookEditor,
+    ...vscode.window.visibleNotebookEditors,
+  ].find((e) => e?.notebook === notebook);
+  if (!editor || editor.selection.isEmpty) {
+    return null;
+  }
+  const cell = notebook.cellAt(editor.selection.start);
   return {
     source: cell.document.getText(),
     isCode: cell.kind === vscode.NotebookCellKind.Code,

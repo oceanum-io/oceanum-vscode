@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
 import type { ChatMessage, ExtToWebviewMessage } from "../types";
 import { type Message, responseToMessage } from "../responseToMessage";
+import { isStaleRunMessage } from "../runMessages";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -12,12 +13,22 @@ export function ChatPanel(): React.ReactElement {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedInput, setSavedInput] = useState("");
+  // The notebook this conversation is pinned to, as the extension reports it:
+  // undefined until the conversation starts, null when it has none.
+  const [context, setContext] = useState<string | null | undefined>(undefined);
+  // False from New chat until the next request; see isStaleRunMessage.
+  const acceptRun = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const msg = event.data as ExtToWebviewMessage;
-      if (msg.command === "chat-response") {
+      if (isStaleRunMessage(msg, acceptRun.current)) {
+        return;
+      }
+      if (msg.command === "chat-context") {
+        setContext(msg.notebook);
+      } else if (msg.command === "chat-response") {
         // One bubble per round. The run may still be placing, running and
         // observing cells, so this does not end "loading": Stop must stay
         // available until "chat-done".
@@ -62,7 +73,23 @@ export function ChatPanel(): React.ReactElement {
     setError(null);
     setMessages((prev) => [...prev, { role: "user", content: prompt }]);
     setLoading(true);
+    acceptRun.current = true;
     vscode.postMessage({ command: "chat-request", prompt, chatHistory });
+  };
+
+  // Clear the conversation and start another, pinned to whichever notebook is
+  // active now. The extension ends a run in flight without reporting it: its
+  // "Stopped." belongs to the conversation being thrown away. The prompt
+  // history (up/down arrow) is kept -- it is input recall, not conversation.
+  const newChat = () => {
+    acceptRun.current = false;
+    setMessages([]);
+    setInput("");
+    setError(null);
+    setLoading(false);
+    setHistoryIndex(-1);
+    setSavedInput("");
+    vscode.postMessage({ command: "chat-new" });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -97,11 +124,29 @@ export function ChatPanel(): React.ReactElement {
 
   return (
     <div className="chat-panel">
+      <div className="chat-toolbar">
+        <span className="chat-context" title={context ?? undefined}>
+          {context === undefined
+            ? ""
+            : context === null
+              ? "No notebook in context"
+              : `Context: ${context}`}
+        </span>
+        <button
+          className="chat-new"
+          onClick={newChat}
+          title="Clear this conversation and start a new one in the notebook in the active tab, or in a new notebook if that tab is not one"
+        >
+          New chat
+        </button>
+      </div>
+
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="oceanum-empty">
-            Ask Oceanum AI to query and analyse Datamesh data. Generated code is
-            inserted into your active notebook.
+            Ask Oceanum AI to query and analyse Datamesh data. Answers go into
+            this chat&apos;s notebook: the one in the active tab when the chat
+            starts, or a new one.
           </div>
         )}
         {messages.map((msg, i) => (

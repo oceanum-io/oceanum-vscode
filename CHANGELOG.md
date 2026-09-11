@@ -6,6 +6,26 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+
+- **New chat** button in the AI panel. It clears the conversation and starts a
+  new one. A response still in progress is stopped, without a "Stopped."
+  message in the new conversation.
+
+### Changed
+
+- **Each chat has its own notebook.** It is the notebook in the active tab when
+  the chat starts (with New chat, or the first message), or, when that tab is
+  not a notebook, a new one: created beside the file in the active tab, else in
+  the first workspace folder, else untitled when no folder is open. The panel
+  shows its name. Its cells are the chat's context, and every answer's cells go
+  into it whichever tab is in front: it is brought to the front, opened again
+  if it was closed, and followed if it is renamed, moved, or saved from untitled. If it was deleted,
+  a new notebook takes its place when an answer has cells to place.
+- Answers go below the selected cell when you are working in the chat's
+  notebook, and at its end otherwise. Focus stays in the chat.
+- Markdown cells are sent as context along with code cells.
+
 ## [0.4.0]
 
 ### Removed
