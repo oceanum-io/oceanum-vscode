@@ -73,11 +73,19 @@ vi.mock("vscode", () => {
     }
   }
   class FileSystemError extends Error {
-    constructor(public code: string) {
-      super(code);
-    }
+    // As in VS Code: the constructor takes a message, and only the static
+    // makers set a code. Anything else built by hand is "Unknown".
+    code = "Unknown";
     static FileNotFound(): FileSystemError {
-      return new FileSystemError("FileNotFound");
+      return FileSystemError.withCode("FileNotFound");
+    }
+    static NoPermissions(): FileSystemError {
+      return FileSystemError.withCode("NoPermissions");
+    }
+    static withCode(code: string): FileSystemError {
+      const error = new FileSystemError(code);
+      error.code = code;
+      return error;
     }
   }
   class WorkspaceEdit {
@@ -604,7 +612,7 @@ describe("a notebook created for a chat", () => {
   it("is not written when the file system refuses to say what is there", async () => {
     // A file system error, but not "no such file": the file may well exist.
     state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
-    state.statError = new FileSystemError("NoPermissions");
+    state.statError = FileSystemError.NoPermissions();
     const { posted, send } = openPanel();
 
     send({ command: "chat-new" });
