@@ -38,7 +38,11 @@ export async function insertContent(
   return null;
 }
 
-async function insertNotebookCell(
+/**
+ * Insert one cell into the notebook `editor` is showing, below its selection,
+ * and select it.
+ */
+export async function insertNotebookCell(
   editor: vscode.NotebookEditor,
   content: string,
   type: "code" | "markdown",
@@ -200,17 +204,22 @@ export function getActiveCellSource(): {
 }
 
 /**
- * The selected cell of `notebook` -- but only while it is the active notebook.
- *
- * Answers are placed in the active notebook, and the server treats a selected
- * code cell as the one its answer replaces. Taken from any other notebook,
- * that would ask for an edit to one notebook and deliver it into another.
+ * The selected cell of `notebook`, from whichever editor is showing it, or
+ * null when no editor shows it or nothing is selected.
  */
-export function activeCellSourceIn(
+export function selectedCellIn(
   notebook: vscode.NotebookDocument,
 ): { source: string; isCode: boolean } | null {
-  if (vscode.window.activeNotebookEditor?.notebook !== notebook) {
+  const editor = [
+    vscode.window.activeNotebookEditor,
+    ...vscode.window.visibleNotebookEditors,
+  ].find((e) => e?.notebook === notebook);
+  if (!editor || editor.selection.isEmpty) {
     return null;
   }
-  return getActiveCellSource();
+  const cell = notebook.cellAt(editor.selection.start);
+  return {
+    source: cell.document.getText(),
+    isCode: cell.kind === vscode.NotebookCellKind.Code,
+  };
 }

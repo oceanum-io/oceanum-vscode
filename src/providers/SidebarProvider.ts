@@ -16,17 +16,27 @@ import {
 } from "../codegen/datasourceCodegen";
 import {
   insertContent,
+  insertNotebookCell,
   getNotebookCells,
   notebookCellsOf,
-  activeCellSourceIn,
+  selectedCellIn,
   runCellAndHarvest,
 } from "../notebook/notebookUtils";
 import { runChatLoop, type PlacedResponse } from "../ai/loop";
 
 /** A notebook's file name, for the panel to show. */
-function notebookName(notebook: vscode.NotebookDocument): string {
-  const path = notebook.uri.path;
-  return path.slice(path.lastIndexOf("/") + 1);
+function notebookName(uri: vscode.Uri): string {
+  return uri.path.slice(uri.path.lastIndexOf("/") + 1);
+}
+
+/** A new, empty Jupyter notebook, shown as the active tab. */
+async function createNotebook(): Promise<vscode.NotebookDocument> {
+  const notebook = await vscode.workspace.openNotebookDocument(
+    "jupyter-notebook",
+    new vscode.NotebookData([]),
+  );
+  await vscode.window.showNotebookDocument(notebook);
+  return notebook;
 }
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
@@ -38,12 +48,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _cachedToken: string | undefined;
   // The chat run in flight, if any; "chat-stop" aborts it.
   private _current: AbortController | undefined;
-  // The notebook the current conversation is about: undefined until the
-  // conversation starts, null when it has none. Pinned when it starts -- New
-  // chat, or the first message -- from the ACTIVE TAB, and kept for the whole
-  // conversation, so switching tabs mid-thread does not change what the agent
-  // is shown.
-  private _pinned: vscode.NotebookDocument | null | undefined;
+  // The notebook the current conversation lives in -- what the agent is
+  // shown, and where its answers go -- or undefined until it starts. Held by
+  // URI, so it survives being closed and opened again.
+  private _pinned: vscode.Uri | undefined;
+  // Starting a conversation can create a notebook, so starts run one at a
+  // time: a second New chat must find the notebook the first one created as
+  // the active tab rather than create another.
+  private _starting: Promise<void> = Promise.resolve();
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -63,19 +75,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(
       (msg: WebviewToExtMessage) => void this._handleMessage(msg),
-      null,
-      this._disposables,
-    );
-
-    // A pinned notebook that closes is dropped at once rather than at the next
-    // message, so the panel stops showing it as the context straight away.
-    vscode.workspace.onDidCloseNotebookDocument(
-      (closed) => {
-        if (closed === this._pinned) {
-          this._pinned = null;
-          this._post({ command: "chat-context", notebook: null });
-        }
-      },
       null,
       this._disposables,
     );
@@ -123,13 +122,58 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._view?.webview.postMessage(msg);
   }
 
-  /** Pin the notebook in the active tab, if any, as the conversation's. */
-  private _pin(): void {
-    this._pinned = vscode.window.activeNotebookEditor?.notebook ?? null;
+  /**
+   * Start a conversation, pinned to the notebook in the active tab -- or,
+   * when that tab is not a notebook, to a new one made the active tab.
+   */
+  private _start(): Promise<void> {
+    const run = this._starting.then(async () => {
+      this._pinned = undefined;
+      this._pin(
+        vscode.window.activeNotebookEditor?.notebook ??
+          (await createNotebook()),
+      );
+    });
+    this._starting = run.catch(() => undefined);
+    return run;
+  }
+
+  private _pin(notebook: vscode.NotebookDocument): void {
+    this._pinned = notebook.uri;
     this._post({
       command: "chat-context",
-      notebook: this._pinned ? notebookName(this._pinned) : null,
+      notebook: notebookName(notebook.uri),
     });
+  }
+
+  /**
+   * The notebook at `uri`, opened again if it has been closed. An untitled
+   * notebook, or one whose file has gone, cannot be: a new notebook takes its
+   * place -- and becomes the conversation's, if `uri` still is.
+   */
+  private async _open(uri: vscode.Uri): Promise<vscode.NotebookDocument> {
+    const open = vscode.workspace.notebookDocuments.find(
+      (n) => !n.isClosed && n.uri.toString() === uri.toString(),
+    );
+    if (open) {
+      return open;
+    }
+    if (uri.scheme !== "untitled") {
+      const reopened = await Promise.resolve(
+        vscode.workspace.openNotebookDocument(uri),
+      ).then(
+        (n) => n,
+        () => undefined,
+      );
+      if (reopened) {
+        return reopened;
+      }
+    }
+    const replacement = await createNotebook();
+    if (this._pinned?.toString() === uri.toString()) {
+      this._pin(replacement);
+    }
+    return replacement;
   }
 
   private async _handleMessage(msg: WebviewToExtMessage): Promise<void> {
@@ -182,7 +226,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const run = this._current;
         this._current = undefined;
         run?.abort();
-        this._pin();
+        // A notebook that cannot be created is not reported here: the panel
+        // ignores run messages until the next request, which tries again and
+        // says why.
+        await this._start().catch(() =>
+          this._post({ command: "chat-context", notebook: null }),
+        );
         break;
       }
     }
@@ -216,16 +265,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       // A conversation nobody started with New chat starts at its first
       // message, the same way.
+      await this._starting;
       if (this._pinned === undefined) {
-        this._pin();
-      } else if (this._pinned?.isClosed) {
-        // Closed since it was pinned: say so, rather than keep claiming it.
-        this._pinned = null;
-        this._post({ command: "chat-context", notebook: null });
+        await this._start();
       }
-      const notebook = this._pinned;
-      const cells = notebook ? notebookCellsOf(notebook) : [];
-      const activeCell = notebook ? activeCellSourceIn(notebook) : null;
+      if (this._current !== controller || this._pinned === undefined) {
+        return;
+      }
+      // This request's notebook, captured now: if New chat pins another one
+      // while it runs, its answers must not follow the new pin.
+      const notebook = await this._open(this._pinned);
+      if (this._current !== controller) {
+        return;
+      }
+      const cells = notebookCellsOf(notebook);
+      const selected = selectedCellIn(notebook);
 
       const payload: Record<string, unknown> = { prompt };
       if (chatHistory.length > 0) {
@@ -234,9 +288,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (cells.length > 0) {
         payload.notebookCells = cells;
       }
-      if (activeCell) {
-        payload[activeCell.isCode ? "codeContext" : "context"] =
-          activeCell.source;
+      if (selected) {
+        payload[selected.isCode ? "codeContext" : "context"] = selected.source;
       }
 
       // Read per prompt, not once at activation, so a settings change applies
@@ -264,7 +317,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               signal,
             ),
           place: (response, autoRun, signal) =>
-            this._place(response, autoRun, signal),
+            this._place(notebook.uri, response, autoRun, signal),
           // One bubble per round, as it happens, so a chain of three steps
           // reads as three steps while it is still running.
           say: (response) => this._post({ command: "chat-response", response }),
@@ -352,21 +405,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /**
    * Place every block in order -- code as code cells, markdown as markdown
-   * cells -- and, when auto-run is on, run each code cell as it lands and
-   * report what it produced. Stop ends placement between blocks and cancels
-   * the cell that is running.
+   * cells -- into the conversation's notebook, and, when auto-run is on, run
+   * each code cell as it lands and report what it produced. Stop ends
+   * placement between blocks and cancels the cell that is running.
    */
   private async _place(
+    notebookUri: vscode.Uri,
     response: OceanumResponse,
     autoRun: boolean,
     signal: AbortSignal,
   ): Promise<PlacedResponse> {
     const runs: PlacedResponse["runs"] = [];
+    if (response.blocks.length === 0 || signal.aborted) {
+      return { runs };
+    }
+    // Every answer goes into the conversation's notebook, whichever tab is in
+    // front: that notebook is brought to the front -- opened again if it was
+    // closed -- so the user sees where it went. Focus stays where it was, so a
+    // follow-up can be typed while the cells land.
+    const notebook = await this._open(notebookUri);
+    if (signal.aborted) {
+      return { runs };
+    }
+    const editor = await vscode.window.showNotebookDocument(notebook, {
+      preserveFocus: true,
+    });
     for (const block of response.blocks) {
       if (signal.aborted) {
         break;
       }
-      const cell = await insertContent(block.content, block.type);
+      const cell = await insertNotebookCell(editor, block.content, block.type);
       if (block.type === "code" && autoRun && cell !== null) {
         const outcome = await runCellAndHarvest(cell, signal);
         runs.push({ code: block.content, ...outcome });

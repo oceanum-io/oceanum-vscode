@@ -144,8 +144,9 @@ export function ChatPanel(): React.ReactElement {
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="oceanum-empty">
-            Ask Oceanum AI to query and analyse Datamesh data. Generated code is
-            inserted into your active notebook.
+            Ask Oceanum AI to query and analyse Datamesh data. Answers go into
+            this chat&apos;s notebook: the one in the active tab when the chat
+            starts, or a new one.
           </div>
         )}
         {messages.map((msg, i) => (
