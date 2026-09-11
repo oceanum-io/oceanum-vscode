@@ -53,8 +53,20 @@ function cellsOf(notebook: vscode.NotebookDocument): string {
   );
 }
 
-// How close together an untitled notebook's closing and a file notebook's
-// opening must be for the file to be taken as its saved copy.
+/**
+ * Just the kinds of a notebook's cells, in order. A save can rewrite the
+ * saved copy's text (format on save, trimming whitespace), but not these.
+ */
+function kindsOf(notebook: vscode.NotebookDocument): string {
+  return notebook
+    .getCells()
+    .map((cell) => cell.kind)
+    .join(",");
+}
+
+// Longest time from a file notebook opening to an untitled notebook closing
+// for the file to be taken as its saved copy: time enough to fill and save
+// it, formatters included.
 const SAVE_WINDOW_MS = 10_000;
 
 // The smallest valid notebook. Naming Python lets the editor offer Python
@@ -155,12 +167,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // the active tab rather than create another.
   private _starting: Promise<void> = Promise.resolve();
   // When each notebook was opened, recently: saving an untitled notebook
-  // opens its file copy at about the moment the untitled one closes.
+  // opens its file copy shortly before the untitled one closes.
   private _openedAt = new Map<string, number>();
-  // The conversation's untitled notebook, just closed, until its saved copy
-  // turns up.
-  private _closedUntitled:
-    { uri: string; cells: string; at: number } | undefined;
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -208,8 +216,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._disposables,
     );
 
-    // Saving an untitled notebook closes it and opens a file notebook with
-    // the same cells in its tab, and no rename event says so. The pin, and a
+    // Saving an untitled notebook opens a file notebook in its tab and then
+    // closes the untitled one, and no rename event says so. The pin, and a
     // run waiting for its answer, go with it.
     vscode.workspace.onDidOpenNotebookDocument(
       (notebook) => {
@@ -220,7 +228,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         }
         this._openedAt.set(notebook.uri.toString(), now);
-        this._followSave();
       },
       null,
       this._disposables,
@@ -233,12 +240,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           (this._pinned?.toString() === uri ||
             this._target?.uri.toString() === uri)
         ) {
-          this._closedUntitled = {
-            uri,
-            cells: cellsOf(notebook),
-            at: Date.now(),
-          };
-          this._followSave();
+          this._followSave(uri, notebook);
         }
       },
       null,
@@ -328,39 +330,45 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Move the pin, and a run waiting for its answer, to the file an untitled
-   * notebook of theirs was just saved as, once that file notebook is open:
-   * one opened within SAVE_WINDOW_MS of the untitled one closing, with the
-   * same cells. Both, so that discarding an untitled notebook does not pin
-   * some other notebook that happens to hold the same cells.
+   * Move the pin, and a run waiting for its answer, from the untitled
+   * notebook at `uri`, which has just closed, to the file it was saved as.
+   *
+   * VS Code opens that copy, fills it and saves it, running any save
+   * participants, and only then closes the untitled notebook. So the copy is
+   * a notebook opened within the last SAVE_WINDOW_MS with the same cells.
+   * When a formatter or whitespace trimming rewrote their text on save, it is
+   * the one with the same kinds of cell in the same order, taken only if no
+   * other notebook fits as well. Discarding an untitled notebook closes it
+   * too, and whatever is opened after that is never taken for its copy.
    */
-  private _followSave(): void {
-    const closed = this._closedUntitled;
-    if (!closed) {
-      return;
-    }
-    if (Date.now() - closed.at > SAVE_WINDOW_MS) {
-      this._closedUntitled = undefined;
-      return;
-    }
-    const saved = vscode.workspace.notebookDocuments.find((n) => {
+  private _followSave(uri: string, untitled: vscode.NotebookDocument): void {
+    const now = Date.now();
+    const opened = vscode.workspace.notebookDocuments.filter((n) => {
       const at = this._openedAt.get(n.uri.toString());
       return (
         !n.isClosed &&
         n.uri.scheme !== "untitled" &&
         at !== undefined &&
-        Math.abs(at - closed.at) <= SAVE_WINDOW_MS &&
-        cellsOf(n) === closed.cells
+        now - at <= SAVE_WINDOW_MS
       );
     });
+    const cells = cellsOf(untitled);
+    const kinds = kindsOf(untitled);
+    const same = opened.filter((n) => cellsOf(n) === cells);
+    const alike = opened.filter((n) => kindsOf(n) === kinds);
+    let saved: vscode.NotebookDocument | undefined;
+    if (same.length === 1) {
+      saved = same[0];
+    } else if (same.length === 0 && alike.length === 1) {
+      saved = alike[0];
+    }
     if (!saved) {
       return;
     }
-    this._closedUntitled = undefined;
-    if (this._pinned?.toString() === closed.uri) {
+    if (this._pinned?.toString() === uri) {
       this._pin(saved);
     }
-    if (this._target?.uri.toString() === closed.uri) {
+    if (this._target?.uri.toString() === uri) {
       this._target.uri = saved.uri;
     }
   }

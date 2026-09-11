@@ -361,29 +361,23 @@ function move(from: string, to: string): void {
 }
 
 /**
- * Save the untitled `nb` as a file, as VS Code does: a file notebook with the
- * same cells opens in its tab and the untitled one closes, with no rename
- * event.
+ * Save the untitled `nb` as a file, in the order VS Code 1.135 does it
+ * (`doSaveAs`). The file notebook opens in its tab, empty, and is filled.
+ * It is then saved, and a save participant (format on save, trimming
+ * whitespace) may `rewrite` each cell's text. Only then does the untitled
+ * notebook close. No rename event says any of it.
  */
 function saveAs(
   nb: FakeNotebook,
   path: string,
-  order: "open-first" | "close-first" = "open-first",
+  rewrite: (text: string) => string = (text) => text,
 ): FakeNotebook {
-  const saved = new FakeNotebook(
-    state.uri("file", path),
-    nb.cells.map((cell): [number, string] => [
-      cell.kind,
-      cell.document.getText(),
-    ]),
-  );
-  if (order === "open-first") {
-    activate(saved);
-    close(nb);
-  } else {
-    close(nb);
-    activate(saved);
-  }
+  const saved = new FakeNotebook(state.uri("file", path));
+  activate(saved);
+  nb.cells.forEach((cell, index) => {
+    saved.insert(index, cell.kind, rewrite(cell.document.getText()));
+  });
+  close(nb);
   return saved;
 }
 
@@ -935,16 +929,41 @@ describe("an untitled notebook saved as a file", () => {
     expect(state.created).toBe(0);
   });
 
-  it("is followed whichever order the copy opens and the original closes in", async () => {
-    const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
+  it("is followed when saving reformats its cells", async () => {
+    // Format on save, or trimming whitespace, rewrites the copy's text before
+    // the untitled notebook closes. Its cells stay the same kinds, in order.
+    const u = notebook(
+      "Untitled-1.ipynb",
+      [
+        [CODE, "x=1  "],
+        [MARKUP, "# Notes"],
+      ],
+      "untitled",
+    );
     activate(u);
     const { posted, send } = openPanel();
     send({ command: "chat-new" });
     await settle();
 
-    saveAs(u, "/work/analysis.ipynb", "close-first");
+    saveAs(u, "/work/analysis.ipynb", (text) =>
+      text === "x=1  " ? "x = 1" : text,
+    );
 
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "analysis.ipynb"]);
+  });
+
+  it("follows neither of two notebooks that could be its reformatted copy", async () => {
+    // A guess between them could pin the wrong one.
+    const u = notebook("Untitled-1.ipynb", [[CODE, "x=1"]], "untitled");
+    activate(u);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    activate(notebook("other.ipynb", [[CODE, "y = 2"]]));
+    saveAs(u, "/work/analysis.ipynb", () => "x = 1");
+
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
   });
 
   it("is followed by a run waiting for its answer", async () => {
@@ -980,7 +999,9 @@ describe("an untitled notebook saved as a file", () => {
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
   });
 
-  it("is not mistaken, when discarded, for a notebook with other cells opened at once", async () => {
+  it("is not mistaken, when discarded, for a notebook opened just after it", async () => {
+    // The saved copy always opens before the untitled notebook closes, so
+    // this one, with the same cells or not, is not it.
     const u = notebook("Untitled-1.ipynb", [[CODE, "x = 1"]], "untitled");
     activate(u);
     const { posted, send } = openPanel();
@@ -988,7 +1009,7 @@ describe("an untitled notebook saved as a file", () => {
     await settle();
 
     close(u);
-    activate(notebook("other.ipynb", [[CODE, "y = 2"]]));
+    activate(notebook("other.ipynb", [[CODE, "x = 1"]]));
 
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
   });
