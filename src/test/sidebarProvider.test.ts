@@ -43,6 +43,8 @@ const state = vi.hoisted(() => {
     onDisk: new Map<string, FakeNotebook>(),
     created: 0,
     written: [] as string[],
+    // What `fs.stat` fails with, when the failure is not "no such file".
+    statError: undefined as unknown,
     shown: [] as Array<{ path: string; preserveFocus?: boolean }>,
     inserted: [] as Array<{ path: string; index: number; text: string }>,
     afterInsert: undefined as (() => void) | undefined,
@@ -68,6 +70,14 @@ vi.mock("vscode", () => {
       public end: number,
     ) {
       this.isEmpty = start === end;
+    }
+  }
+  class FileSystemError extends Error {
+    constructor(public code: string) {
+      super(code);
+    }
+    static FileNotFound(): FileSystemError {
+      return new FileSystemError("FileNotFound");
     }
   }
   class WorkspaceEdit {
@@ -125,8 +135,11 @@ vi.mock("vscode", () => {
       },
       fs: {
         stat: vi.fn(async (uri: FakeUri) => {
+          if (state.statError) {
+            throw state.statError;
+          }
           if (!state.onDisk.has(uri.path)) {
-            throw new Error("no such file");
+            throw FileSystemError.FileNotFound();
           }
           return {};
         }),
@@ -241,10 +254,12 @@ vi.mock("vscode", () => {
     },
     NotebookRange,
     WorkspaceEdit,
+    FileSystemError,
   };
 });
 
 import { SidebarProvider } from "../providers/SidebarProvider";
+import { FileSystemError } from "vscode";
 
 const CODE = 2;
 const MARKUP = 1;
@@ -457,6 +472,7 @@ beforeEach(() => {
   state.onDisk = new Map();
   state.created = 0;
   state.written = [];
+  state.statError = undefined;
   state.shown = [];
   state.inserted = [];
   state.afterInsert = undefined;
@@ -566,6 +582,51 @@ describe("New chat", () => {
 });
 
 describe("a notebook created for a chat", () => {
+  it("is never written over a file the file system failed to describe", async () => {
+    // Writing replaces a file's contents, so only "no such file" frees the
+    // name. A file system that answers badly would otherwise cost the user
+    // their own Untitled.ipynb.
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    state.onDisk.set(
+      "/work/Untitled.ipynb",
+      notebook("Untitled.ipynb", [[CODE, "precious()"]]),
+    );
+    state.statError = new Error("Unavailable");
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual([]);
+    expect(contexts(posted)).toEqual([null]);
+  });
+
+  it("is not written when the file system refuses to say what is there", async () => {
+    // A file system error, but not "no such file": the file may well exist.
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    state.statError = new FileSystemError("NoPermissions");
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual([]);
+    expect(contexts(posted)).toEqual([null]);
+  });
+
+  it("is not written for an error that merely claims the file is missing", async () => {
+    // Only VS Code's own FileSystemError is trusted to mean it.
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    state.statError = { code: "FileNotFound" };
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual([]);
+    expect(contexts(posted)).toEqual([null]);
+  });
+
   it("is a file in the workspace, so saving it cannot lose the chat", async () => {
     // An untitled notebook gets a new URI when it is saved, and the chat
     // pinned to the old one would lose it.
