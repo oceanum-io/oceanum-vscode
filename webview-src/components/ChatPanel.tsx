@@ -135,7 +135,7 @@ export function ChatPanel(): React.ReactElement {
         <button
           className="chat-new"
           onClick={newChat}
-          title="Clear this conversation and start a new one, with the active notebook as its context"
+          title="Clear this conversation and start a new one in the notebook in the active tab, or in a new notebook if that tab is not one"
         >
           New chat
         </button>

@@ -7,11 +7,13 @@ interface FakeUri {
   toString(): string;
 }
 
-interface FakeNotebook {
-  uri: FakeUri;
-  isClosed: boolean;
-  getCells(): unknown[];
-  cellAt(index: number): unknown;
+interface FakeCell {
+  kind: number;
+  readonly index: number;
+  notebook: FakeNotebook;
+  document: { getText(): string };
+  outputs: Array<{ items: unknown[] }>;
+  executionSummary: { success?: boolean } | undefined;
 }
 
 interface FakeEditor {
@@ -20,22 +22,41 @@ interface FakeEditor {
   revealRange(): void;
 }
 
-const state = vi.hoisted(() => ({
-  activeNotebookEditor: undefined as unknown,
-  documents: [] as unknown[],
-  onDisk: new Map<string, unknown>(),
-  created: 0,
-  shown: [] as Array<{ path: string; preserveFocus?: boolean }>,
-  applied: [] as Array<{ path: string }>,
-  makeNotebook: undefined as
-    | ((
-        name: string,
-        cells: Array<[number, string]>,
-        scheme?: string,
-      ) => unknown)
-    | undefined,
-  makeEditor: undefined as ((notebook: unknown) => unknown) | undefined,
-}));
+interface CellEdit {
+  index: number;
+  cells: Array<{ kind: number; value: string }>;
+}
+
+const state = vi.hoisted(() => {
+  const uri = (scheme: string, path: string): FakeUri => ({
+    scheme,
+    path,
+    toString: () => `${scheme}:${path}`,
+  });
+  return {
+    uri,
+    activeNotebookEditor: undefined as FakeEditor | undefined,
+    activeTextEditor: undefined as { document: { uri: FakeUri } } | undefined,
+    workspaceFolders: undefined as Array<{ uri: FakeUri }> | undefined,
+    config: {} as Record<string, unknown>,
+    documents: [] as FakeNotebook[],
+    onDisk: new Map<string, FakeNotebook>(),
+    created: 0,
+    written: [] as string[],
+    shown: [] as Array<{ path: string; preserveFocus?: boolean }>,
+    inserted: [] as Array<{ path: string; index: number; text: string }>,
+    afterInsert: undefined as (() => void) | undefined,
+    renameListeners: [] as Array<
+      (event: { files: Array<{ oldUri: FakeUri; newUri: FakeUri }> }) => void
+    >,
+    fake: undefined as
+      | {
+          notebook(path: string, scheme?: string): FakeNotebook;
+          editor(notebook: FakeNotebook): FakeEditor;
+        }
+      | undefined,
+  };
+});
 
 vi.mock("vscode", () => {
   class NotebookRange {
@@ -48,11 +69,13 @@ vi.mock("vscode", () => {
     }
   }
   class WorkspaceEdit {
-    entries: Array<{ uri: { path: string } }> = [];
-    set(uri: { path: string }) {
-      this.entries.push({ uri });
+    entries: Array<{ uri: FakeUri; edits: CellEdit[] }> = [];
+    set(uri: FakeUri, edits: CellEdit[]) {
+      this.entries.push({ uri, edits });
     }
   }
+  const find = (uri: FakeUri) =>
+    state.documents.find((d) => d.uri.toString() === uri.toString());
   return {
     window: {
       get activeNotebookEditor() {
@@ -61,68 +84,135 @@ vi.mock("vscode", () => {
       get visibleNotebookEditors() {
         return state.activeNotebookEditor ? [state.activeNotebookEditor] : [];
       },
+      get activeTextEditor() {
+        return state.activeTextEditor;
+      },
       showNotebookDocument: vi.fn(
         async (
-          notebook: { uri: { path: string } },
+          notebook: FakeNotebook,
           options?: { preserveFocus?: boolean },
         ) => {
           state.shown.push({
             path: notebook.uri.path,
             preserveFocus: options?.preserveFocus,
           });
-          const shown = state.makeEditor!(notebook);
-          // With preserveFocus the focus stays where it was, and so does the
-          // active editor: placement must go through the editor it showed,
-          // not through whichever one happens to be active.
-          if (!options?.preserveFocus) {
-            state.activeNotebookEditor = shown;
-          }
+          // Shown in the active editor group, so it becomes the active
+          // notebook editor whether or not it took the keyboard focus.
+          const shown = state.fake!.editor(notebook);
+          state.activeNotebookEditor = shown;
           return shown;
         },
       ),
-      activeTextEditor: undefined,
       showInformationMessage: vi.fn(),
       showWarningMessage: vi.fn(),
     },
     workspace: {
       getConfiguration: () => ({
-        get: (_key: string, fallback: unknown) => fallback,
+        get: (key: string, fallback: unknown) =>
+          key in state.config ? state.config[key] : fallback,
       }),
+      get workspaceFolders() {
+        return state.workspaceFolders;
+      },
+      getWorkspaceFolder: (uri: FakeUri) =>
+        state.workspaceFolders?.find((f) =>
+          uri.path.startsWith(`${f.uri.path}/`),
+        ),
       get notebookDocuments() {
         return state.documents;
+      },
+      fs: {
+        stat: vi.fn(async (uri: FakeUri) => {
+          if (!state.onDisk.has(uri.path)) {
+            throw new Error("no such file");
+          }
+          return {};
+        }),
+        writeFile: vi.fn(async (uri: FakeUri) => {
+          state.written.push(uri.path);
+          const written = state.fake!.notebook(uri.path);
+          written.isClosed = true;
+          state.onDisk.set(uri.path, written);
+        }),
       },
       openNotebookDocument: vi.fn(async (what: unknown) => {
         if (typeof what === "string") {
           state.created += 1;
-          const fresh = state.makeNotebook!(
+          const fresh = state.fake!.notebook(
             `Untitled-${state.created}.ipynb`,
-            [],
             "untitled",
           );
           state.documents.push(fresh);
           return fresh;
         }
-        const found = state.onDisk.get((what as { path: string }).path) as
-          { isClosed: boolean } | undefined;
+        const found = state.onDisk.get((what as FakeUri).path);
         if (!found) {
           throw new Error("no such file");
         }
         found.isClosed = false;
-        state.documents.push(found);
+        if (!state.documents.includes(found)) {
+          state.documents.push(found);
+        }
         return found;
       }),
       applyEdit: vi.fn(
-        async (edit: { entries: Array<{ uri: { path: string } }> }) => {
-          for (const entry of edit.entries) {
-            state.applied.push({ path: entry.uri.path });
+        async (edit: {
+          entries: Array<{ uri: FakeUri; edits: CellEdit[] }>;
+        }) => {
+          for (const { uri, edits } of edit.entries) {
+            for (const { index, cells } of edits) {
+              for (const cell of cells) {
+                state.inserted.push({
+                  path: uri.path,
+                  index,
+                  text: cell.value,
+                });
+                find(uri)?.insert(index, cell.kind, cell.value);
+              }
+            }
           }
+          state.afterInsert?.();
           return true;
         },
       ),
+      onDidRenameFiles: (listener: (typeof state.renameListeners)[number]) => {
+        state.renameListeners.push(listener);
+        return { dispose() {} };
+      },
     },
-    commands: { executeCommand: vi.fn() },
+    commands: {
+      executeCommand: vi.fn(
+        async (
+          command: string,
+          args?: { ranges: Array<{ start: number }>; document: FakeUri },
+        ) => {
+          if (command === "notebook.cell.execute" && args) {
+            const cell = find(args.document)?.cellAt(args.ranges[0].start);
+            if (cell) {
+              cell.executionSummary = { success: true };
+            }
+          }
+        },
+      ),
+    },
     env: { clipboard: { writeText: vi.fn() } },
-    Uri: { joinPath: (...parts: unknown[]) => parts },
+    Uri: {
+      joinPath: (base: FakeUri, ...parts: string[]) => {
+        const segments = (base.path ?? "").split("/");
+        for (const part of parts) {
+          if (part === "..") {
+            segments.pop();
+          } else {
+            segments.push(part);
+          }
+        }
+        return state.uri(base.scheme ?? "file", segments.join("/"));
+      },
+      parse: (text: string) => {
+        const colon = text.indexOf(":");
+        return state.uri(text.slice(0, colon), text.slice(colon + 1));
+      },
+    },
     NotebookCellKind: { Markup: 1, Code: 2 },
     NotebookData: class {
       constructor(public cells: unknown[]) {}
@@ -147,23 +237,56 @@ import { SidebarProvider } from "../providers/SidebarProvider";
 const CODE = 2;
 const MARKUP = 1;
 
+class FakeNotebook {
+  isClosed = false;
+  readonly cells: FakeCell[] = [];
+
+  constructor(
+    public uri: FakeUri,
+    cells: Array<[number, string]> = [],
+  ) {
+    for (const [kind, text] of cells) {
+      this.insert(this.cells.length, kind, text);
+    }
+  }
+
+  get cellCount(): number {
+    return this.cells.length;
+  }
+
+  getCells(): FakeCell[] {
+    return this.cells;
+  }
+
+  cellAt(index: number): FakeCell {
+    return this.cells[index];
+  }
+
+  insert(index: number, kind: number, text: string): void {
+    const cells = this.cells;
+    const cell: FakeCell = {
+      kind,
+      notebook: this,
+      document: { getText: () => text },
+      outputs: [],
+      executionSummary: undefined,
+      get index() {
+        return cells.indexOf(cell);
+      },
+    };
+    cells.splice(index, 0, cell);
+  }
+}
+
+/** A notebook at `/work/<name>`, or at `name` when it is untitled. */
 function notebook(
   name: string,
-  cells: Array<[number, string]>,
+  cells: Array<[number, string]> = [],
   scheme = "file",
 ): FakeNotebook {
-  const made = cells.map(([kind, text]) => ({
-    kind,
-    document: { getText: () => text },
-  }));
-  const path = scheme === "untitled" ? name : `/work/${name}`;
-  return {
-    uri: { scheme, path, toString: () => `${scheme}:${path}` },
-    isClosed: false,
-    getCells: () => made,
-    cellAt: (index: number) =>
-      made[index] ?? { kind: CODE, document: { getText: () => "" } },
-  };
+  const path =
+    scheme === "file" && !name.startsWith("/") ? `/work/${name}` : name;
+  return new FakeNotebook(state.uri(scheme, path), cells);
 }
 
 const editors = new Map<FakeNotebook, FakeEditor>();
@@ -182,23 +305,44 @@ function editor(nb: FakeNotebook, selected?: number): FakeEditor {
   return made;
 }
 
-/** Open `nb` in the active tab. */
+/** Open `nb` in the active tab; a file notebook is on disk too. */
 function activate(nb: FakeNotebook, selected?: number): void {
   if (!state.documents.includes(nb)) {
     state.documents.push(nb);
   }
-  state.activeNotebookEditor = editor(nb, selected);
-}
-
-/** Close `nb`'s tab; saved to disk unless it is untitled. */
-function close(nb: FakeNotebook): void {
-  nb.isClosed = true;
-  state.documents = state.documents.filter((d) => d !== nb);
   if (nb.uri.scheme === "file") {
     state.onDisk.set(nb.uri.path, nb);
   }
-  if ((state.activeNotebookEditor as FakeEditor | undefined)?.notebook === nb) {
+  state.activeNotebookEditor = editor(nb, selected);
+}
+
+/** Close `nb`'s tab. An untitled notebook is gone; a file one stays on disk. */
+function close(nb: FakeNotebook): void {
+  nb.isClosed = true;
+  editors.delete(nb);
+  state.documents = state.documents.filter((d) => d !== nb);
+  if (state.activeNotebookEditor?.notebook === nb) {
     state.activeNotebookEditor = undefined;
+  }
+}
+
+/** Rename or move the file or folder at `from` to `to`, as the explorer does. */
+function move(from: string, to: string): void {
+  const all = new Set([...state.documents, ...state.onDisk.values()]);
+  for (const nb of all) {
+    const path = nb.uri.path;
+    if (path === from || path.startsWith(`${from}/`)) {
+      nb.uri = state.uri("file", to + path.slice(from.length));
+    }
+  }
+  state.onDisk = new Map(
+    [...state.onDisk.values()].map((nb) => [nb.uri.path, nb]),
+  );
+  const event = {
+    files: [{ oldUri: state.uri("file", from), newUri: state.uri("file", to) }],
+  };
+  for (const listener of state.renameListeners) {
+    listener(event);
   }
 }
 
@@ -225,7 +369,7 @@ function openPanel() {
     onDidDispose: () => ({ dispose() {} }),
   };
   const provider = new SidebarProvider({
-    extensionUri: {},
+    extensionUri: state.uri("file", "/extension"),
     secrets: { get: async () => "a-token" },
   } as never);
   provider.resolveWebviewView(view as never, {} as never, {} as never);
@@ -240,23 +384,32 @@ const requests: Array<{ body: Record<string, unknown>; signal: AbortSignal }> =
 let respond: (body: unknown) => void = () => {};
 
 const settle = async () => {
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 };
+
+const code = (content: string) => ({ type: "code", content });
 
 beforeEach(() => {
   requests.length = 0;
   editors.clear();
   state.activeNotebookEditor = undefined;
+  state.activeTextEditor = undefined;
+  state.workspaceFolders = undefined;
+  state.config = {};
   state.documents = [];
   state.onDisk = new Map();
   state.created = 0;
+  state.written = [];
   state.shown = [];
-  state.applied = [];
-  state.makeNotebook = (name, cells, scheme) => notebook(name, cells, scheme);
-  state.makeEditor = (nb) =>
-    editors.get(nb as FakeNotebook) ?? editor(nb as FakeNotebook);
+  state.inserted = [];
+  state.afterInsert = undefined;
+  state.renameListeners = [];
+  state.fake = {
+    notebook: (path, scheme = "file") => notebook(path, [], scheme),
+    editor: (nb) => editors.get(nb) ?? editor(nb),
+  };
   vi.stubGlobal(
     "fetch",
     vi.fn((_url: string, init: { body: string; signal: AbortSignal }) => {
@@ -334,7 +487,10 @@ describe("New chat", () => {
     await settle();
 
     expect(state.created).toBe(1);
-    expect(state.shown.map((s) => s.path)).toEqual(["Untitled-1.ipynb"]);
+    // Shown without taking focus, so the next question can be typed at once.
+    expect(state.shown).toEqual([
+      { path: "Untitled-1.ipynb", preserveFocus: true },
+    ]);
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb"]);
   });
 
@@ -348,6 +504,55 @@ describe("New chat", () => {
 
     expect(state.created).toBe(1);
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "Untitled-1.ipynb"]);
+  });
+});
+
+describe("a notebook created for a chat", () => {
+  it("is a file in the workspace, so saving it cannot lose the chat", async () => {
+    // An untitled notebook gets a new URI when it is saved, and the chat
+    // pinned to the old one would lose it.
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual(["/work/Untitled.ipynb"]);
+    expect(state.created).toBe(0);
+    expect(state.shown).toEqual([
+      { path: "/work/Untitled.ipynb", preserveFocus: true },
+    ]);
+    expect(contexts(posted)).toEqual(["Untitled.ipynb"]);
+  });
+
+  it("goes beside the file in the active tab, named like Jupyter's", async () => {
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    state.onDisk.set(
+      "/work/src/Untitled.ipynb",
+      notebook("src/Untitled.ipynb"),
+    );
+    state.activeTextEditor = {
+      document: { uri: state.uri("file", "/work/src/model.py") },
+    };
+    const { send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual(["/work/src/Untitled2.ipynb"]);
+  });
+
+  it("goes in the workspace folder when the active file is outside it", async () => {
+    state.workspaceFolders = [{ uri: state.uri("file", "/work") }];
+    state.activeTextEditor = {
+      document: { uri: state.uri("file", "/elsewhere/notes.py") },
+    };
+    const { send } = openPanel();
+
+    send({ command: "chat-new" });
+    await settle();
+
+    expect(state.written).toEqual(["/work/Untitled.ipynb"]);
   });
 });
 
@@ -401,16 +606,13 @@ describe("the conversation's notebook", () => {
     activate(notebook("b.ipynb", [[CODE, "y = 2"]]));
     send({ command: "chat-request", prompt: "plot it", chatHistory: [] });
     await settle();
-    respond({
-      message: "Here.",
-      blocks: [{ type: "code", content: "ds.plot()" }],
-    });
+    respond({ message: "Here.", blocks: [code("ds.plot()")] });
     await settle();
 
     expect(state.shown).toEqual([
       { path: "/work/a.ipynb", preserveFocus: true },
     ]);
-    expect(state.applied).toEqual([{ path: "/work/a.ipynb" }]);
+    expect(state.inserted.map((i) => i.path)).toEqual(["/work/a.ipynb"]);
   });
 
   it("is left in the background when an answer has nothing to place", async () => {
@@ -426,10 +628,10 @@ describe("the conversation's notebook", () => {
     await settle();
 
     expect(state.shown).toEqual([]);
-    expect(state.applied).toEqual([]);
+    expect(state.inserted).toEqual([]);
   });
 
-  it("is opened again when it has been closed", async () => {
+  it("is read from its file when closed, and opened again for an answer", async () => {
     const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
     activate(a);
     const { posted, send } = openPanel();
@@ -440,30 +642,43 @@ describe("the conversation's notebook", () => {
     send({ command: "chat-request", prompt: "more", chatHistory: [] });
     await settle();
     expect(requests[0].body.notebookCells).toEqual(["x = 1"]);
+    // Asking a question does not bring it back as a tab.
+    expect(state.shown).toEqual([]);
 
-    respond({ message: "Here.", blocks: [{ type: "code", content: "y = x" }] });
+    respond({ message: "Here.", blocks: [code("y = x")] });
     await settle();
 
-    expect(state.shown.at(-1)).toEqual({
-      path: "/work/a.ipynb",
-      preserveFocus: true,
-    });
-    expect(state.applied).toEqual([{ path: "/work/a.ipynb" }]);
+    expect(state.shown).toEqual([
+      { path: "/work/a.ipynb", preserveFocus: true },
+    ]);
+    expect(state.inserted.map((i) => i.path)).toEqual(["/work/a.ipynb"]);
     expect(state.created).toBe(0);
     expect(contexts(posted)).toEqual(["a.ipynb"]);
   });
 
-  it("is replaced by a new notebook when it was untitled and closed without saving", async () => {
+  it("is replaced, once gone, only when an answer has cells to place", async () => {
+    // Untitled and closed without saving: nothing left to open again.
     const { posted, send } = openPanel();
     send({ command: "chat-new" });
     await settle();
-    close(state.documents[0] as FakeNotebook);
+    close(state.documents[0]);
+
+    send({ command: "chat-request", prompt: "explain", chatHistory: [] });
+    await settle();
+    expect(requests[0].body.notebookCells).toBeUndefined();
+    respond({ message: "Just words.", blocks: [] });
+    await settle();
+    expect(state.created).toBe(1);
 
     send({ command: "chat-request", prompt: "go on", chatHistory: [] });
+    await settle();
+    expect(state.created).toBe(1);
+    respond({ message: "Here.", blocks: [code("x = 1")] });
     await settle();
 
     expect(state.created).toBe(2);
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "Untitled-2.ipynb"]);
+    expect(state.inserted.map((i) => i.path)).toEqual(["Untitled-2.ipynb"]);
   });
 
   it("supplies its own selected cell, never another notebook's", async () => {
@@ -485,5 +700,148 @@ describe("the conversation's notebook", () => {
     await settle();
     expect(requests[1].body.codeContext).toBeUndefined();
     expect(requests[1].body.context).toBeUndefined();
+  });
+
+  it("follows a rename, rather than losing the notebook and making another", async () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    activate(a);
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    move("/work/a.ipynb", "/work/analysis.ipynb");
+    close(a);
+    send({ command: "chat-request", prompt: "more", chatHistory: [] });
+    await settle();
+
+    expect(contexts(posted)).toEqual(["a.ipynb", "analysis.ipynb"]);
+    expect(requests[0].body.notebookCells).toEqual(["x = 1"]);
+    expect(state.created).toBe(0);
+  });
+
+  it("follows a move of the folder holding it", async () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    activate(a);
+    const { send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    move("/work", "/project");
+    close(a);
+    send({ command: "chat-request", prompt: "more", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("y = x")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.path)).toEqual(["/project/a.ipynb"]);
+    expect(state.created).toBe(0);
+  });
+
+  it("is followed by a run that is waiting for its answer when renamed", async () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    activate(a);
+    const { send } = openPanel();
+
+    send({ command: "chat-request", prompt: "plot", chatHistory: [] });
+    await settle();
+    move("/work/a.ipynb", "/work/renamed.ipynb");
+    respond({ message: "Here.", blocks: [code("ds.plot()")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.path)).toEqual(["/work/renamed.ipynb"]);
+    expect(state.created).toBe(0);
+  });
+});
+
+describe("placing an answer", () => {
+  it("goes below the selected cell when the user is working in the notebook", async () => {
+    // They chose the spot.
+    const a = notebook("a.ipynb", [
+      [CODE, "x = 1"],
+      [CODE, "y = 2"],
+    ]);
+    activate(a, 0);
+    const { send } = openPanel();
+
+    send({ command: "chat-request", prompt: "next", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("z = 3")] });
+    await settle();
+
+    expect(state.inserted).toEqual([
+      { path: "/work/a.ipynb", index: 1, text: "z = 3" },
+    ]);
+  });
+
+  it("goes at the end when the user is in another tab", async () => {
+    // A selection in a notebook they are not looking at is nobody's choice.
+    const a = notebook("a.ipynb", [
+      [CODE, "x = 1"],
+      [CODE, "y = 2"],
+    ]);
+    activate(a, 0);
+    const { send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+
+    activate(notebook("b.ipynb", [[CODE, "q = 0"]]), 0);
+    send({ command: "chat-request", prompt: "next", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("z = 3")] });
+    await settle();
+
+    expect(state.inserted).toEqual([
+      { path: "/work/a.ipynb", index: 2, text: "z = 3" },
+    ]);
+  });
+
+  it("stays in the notebook when the user switches tab while it lands", async () => {
+    const a = notebook("a.ipynb", [[CODE, "x = 1"]]);
+    const b = notebook("b.ipynb", [[CODE, "q = 0"]]);
+    activate(a, 0);
+    const { send } = openPanel();
+
+    send({ command: "chat-request", prompt: "two steps", chatHistory: [] });
+    await settle();
+    state.afterInsert = () => {
+      state.afterInsert = undefined;
+      activate(b, 0);
+    };
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(state.inserted).toEqual([
+      { path: "/work/a.ipynb", index: 1, text: "one" },
+      { path: "/work/a.ipynb", index: 2, text: "two" },
+    ]);
+  });
+
+  it("keeps an iterating run in the notebook that replaced a lost one", async () => {
+    // Every later round would otherwise find the lost notebook still gone,
+    // and make another.
+    state.config = { autoRunCode: true, iterate: true };
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+    close(state.documents[0]);
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    respond({ message: "First.", blocks: [code("a = 1")] });
+    await settle();
+    expect(requests[1].body.runs).toHaveLength(1);
+
+    respond({ message: "Next.", blocks: [code("b = 2")] });
+    await settle();
+    respond({ message: "Done.", blocks: [] });
+    await settle();
+
+    expect(state.created).toBe(2);
+    expect(state.inserted.map((i) => i.path)).toEqual([
+      "Untitled-2.ipynb",
+      "Untitled-2.ipynb",
+    ]);
+    expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "Untitled-2.ipynb"]);
+    expect(posted.at(-1)).toEqual({ command: "chat-done" });
   });
 });
