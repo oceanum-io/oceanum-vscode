@@ -5,6 +5,11 @@ import type { ExtToWebviewMessage } from "./types";
 
 const run: ExtToWebviewMessage[] = [
   { command: "chat-response", response: { message: "late", blocks: [] } },
+  // A late "Reading dataset details…" must not appear in the new conversation.
+  {
+    command: "chat-status",
+    progress: { phase: "tool", tool: "search_catalog" },
+  },
   { command: "chat-done" },
   { command: "chat-stopped" },
   { command: "chat-error", message: "boom" },

@@ -9,6 +9,7 @@ import type {
   IWorkspaceSpec,
   ChatMessage,
   OceanumResponse,
+  Progress,
 } from "../types";
 import {
   generateDatasourceCode,
@@ -23,6 +24,7 @@ import {
   runCellAndHarvest,
 } from "../notebook/notebookUtils";
 import { runChatLoop, type PlacedResponse } from "../ai/loop";
+import { readSse } from "../ai/sse";
 
 /** A notebook's file name, for the panel to show. */
 function notebookName(uri: vscode.Uri): string {
@@ -149,6 +151,60 @@ async function createNotebook(): Promise<vscode.NotebookDocument> {
       );
   await vscode.window.showNotebookDocument(notebook, { preserveFocus: true });
   return notebook;
+}
+
+function isEventStream(res: Response): boolean {
+  return (
+    res.headers.get("content-type")?.includes("text/event-stream") ?? false
+  );
+}
+
+/** One event's data, or null rather than a throw: a malformed frame should
+ * cost a progress update, not the answer. */
+function parseJson<T>(data: string): T | null {
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The answer from a streamed response, reporting progress as it arrives.
+ *
+ * `done` is authoritative: the events before it are for the user to look at,
+ * not for this to reassemble, so a frame lost in transit cannot quietly shorten
+ * the answer. The status was already 200 when the stream opened, so a failure
+ * after that can only arrive as an `error` event -- and a stream that ends with
+ * neither is a failure too, not a partial answer, which would be
+ * indistinguishable from a complete one once it reached the chat.
+ */
+async function readAnswer(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onStatus: (progress: Progress) => void,
+): Promise<unknown> {
+  for await (const event of readSse(body, signal)) {
+    if (event.event === "status") {
+      const progress = parseJson<Progress>(event.data);
+      if (progress?.phase) {
+        onStatus(progress);
+      }
+    } else if (event.event === "done") {
+      return parseJson<unknown>(event.data);
+    } else if (event.event === "error") {
+      const failure = parseJson<{ detail?: unknown }>(event.data);
+      const detail =
+        typeof failure?.detail === "string"
+          ? failure.detail
+          : "the request failed";
+      throw new Error(`Backend error: ${detail}`);
+    }
+  }
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+  throw new Error("The response ended before it was complete.");
 }
 
 /** The notebook a request's answers are placed in, updated as it moves. */
@@ -548,6 +604,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const iterate = cfg.get<boolean>("iterate", false);
 
       const placeInto = target;
+      // What the run is doing, for the panel to show instead of a static
+      // "Thinking…". Posted only while this is still the panel's run, so a run
+      // that New chat or a newer request replaced cannot narrate into it.
+      const status = (progress: Progress) => {
+        if (this._current === controller) {
+          this._post({ command: "chat-status", progress });
+        }
+      };
       const outcome = await runChatLoop(
         prompt,
         chatHistory,
@@ -558,16 +622,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               { ...payload, prompt: p, chatHistory: h },
               token,
               signal,
+              status,
             ),
-          observe: (p, h, runs, signal) =>
-            this._call(
+          observe: (p, h, runs, signal) => {
+            // The agent's turn again. The notebook's "Running the code…" must
+            // not stay on screen while the agent reads what the code printed --
+            // least of all when the answer comes back without a stream to
+            // replace it.
+            status({ phase: "interpreting" });
+            return this._call(
               "/api/chat/observe",
               { ...payload, prompt: p, chatHistory: h, runs },
               token,
               signal,
-            ),
-          place: (response, autoRun, signal) =>
-            this._place(placeInto, response, autoRun, signal),
+              status,
+            );
+          },
+          place: (response, autoRun, signal) => {
+            // The notebook's turn, not the agent's. Without this the agent's
+            // last phase -- "Reading dataset details…" -- stays on screen while
+            // the user's own code runs, which is a worse claim than the vague
+            // "Thinking…" it replaced.
+            if (response.blocks.length > 0) {
+              const runsCode =
+                autoRun && response.blocks.some((b) => b.type === "code");
+              status({ phase: runsCode ? "running" : "placing" });
+            }
+            return this._place(placeInto, response, autoRun, signal);
+          },
           // One bubble per round, as it happens, so a chain of three steps
           // reads as three steps while it is still running.
           say: (response) => this._post({ command: "chat-response", response }),
@@ -607,12 +689,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** One POST to the backend, with the token and the run's abort signal. */
+  /**
+   * One POST to the backend, with the token and the run's abort signal.
+   *
+   * Asks for the streamed form (OCE-175), so `onStatus` hears what the agent
+   * is doing while it works. The server hands out the stream only when it is
+   * asked for by name, and a response that comes back as JSON anyway -- an
+   * older backend, or a proxy -- is read exactly as before.
+   */
   private async _call(
     path: string,
     body: Record<string, unknown>,
     token: string,
     signal: AbortSignal,
+    onStatus: (progress: Progress) => void,
   ): Promise<OceanumResponse> {
     let res: Response;
     try {
@@ -621,6 +711,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         headers: {
           "Content-Type": "application/json",
           "X-Datamesh-Token": token,
+          Accept: "text/event-stream",
         },
         body: JSON.stringify(body),
         signal,
@@ -639,7 +730,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const text = await res.text().catch(() => res.statusText);
       throw new Error(`Backend error: ${text}`);
     }
-    const data = (await res.json()) as Partial<OceanumResponse> | null;
+    const data = (
+      isEventStream(res) && res.body
+        ? await readAnswer(res.body, signal, onStatus)
+        : await res.json()
+    ) as Partial<OceanumResponse> | null;
     // Checked rather than cast. The cast was safe only while the contract
     // never changed; it has (OCE-173), and an extension meeting a backend on
     // the other side of that change would read `blocks` off a body with none.
