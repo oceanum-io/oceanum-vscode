@@ -1312,4 +1312,26 @@ describe("progress while the agent works", () => {
 
     expect(statuses(posted)).toEqual([{ phase: "placing" }]);
   });
+
+  it("says the agent is reading the result once the code has run", async () => {
+    // An iterate round: without this, "Running the code…" stays up for the
+    // whole observe request, and for all of it when that answer is plain JSON.
+    state.config = { autoRunCode: true, iterate: true };
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "plot", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("ds.plot()")] });
+    await settle();
+    expect(requests).toHaveLength(2);
+    respond({ message: "That worked.", blocks: [] });
+    await settle();
+
+    expect(statuses(posted)).toEqual([
+      { phase: "running" },
+      { phase: "interpreting" },
+    ]);
+    expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
 });

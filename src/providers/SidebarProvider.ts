@@ -624,14 +624,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               signal,
               status,
             ),
-          observe: (p, h, runs, signal) =>
-            this._call(
+          observe: (p, h, runs, signal) => {
+            // The agent's turn again. The notebook's "Running the code…" must
+            // not stay on screen while the agent reads what the code printed --
+            // least of all when the answer comes back without a stream to
+            // replace it.
+            status({ phase: "interpreting" });
+            return this._call(
               "/api/chat/observe",
               { ...payload, prompt: p, chatHistory: h, runs },
               token,
               signal,
               status,
-            ),
+            );
+          },
           place: (response, autoRun, signal) => {
             // The notebook's turn, not the agent's. Without this the agent's
             // last phase -- "Reading dataset details…" -- stays on screen while
