@@ -1,15 +1,18 @@
 // Copyright Oceanum Ltd. Apache 2.0
 import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
-import type { ChatMessage, ExtToWebviewMessage } from "../types";
+import type { ChatMessage, ExtToWebviewMessage, Progress } from "../types";
 import { type Message, responseToMessage } from "../responseToMessage";
 import { isStaleRunMessage } from "../runMessages";
+import { describeProgress } from "../progress";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the run is doing now, while it is running; null reads as "Thinking…".
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedInput, setSavedInput] = useState("");
@@ -28,6 +31,8 @@ export function ChatPanel(): React.ReactElement {
       }
       if (msg.command === "chat-context") {
         setContext(msg.notebook);
+      } else if (msg.command === "chat-status") {
+        setProgress(msg.progress);
       } else if (msg.command === "chat-response") {
         // One bubble per round. The run may still be placing, running and
         // observing cells, so this does not end "loading": Stop must stay
@@ -35,6 +40,7 @@ export function ChatPanel(): React.ReactElement {
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
       } else if (msg.command === "chat-done") {
         setLoading(false);
+        setProgress(null);
       } else if (msg.command === "chat-stopped") {
         // The user pressed Stop. A message, not an error: nothing went wrong.
         setMessages((prev) => [
@@ -42,9 +48,11 @@ export function ChatPanel(): React.ReactElement {
           { role: "assistant", content: "Stopped." },
         ]);
         setLoading(false);
+        setProgress(null);
       } else if (msg.command === "chat-error") {
         setError(msg.message);
         setLoading(false);
+        setProgress(null);
       }
     };
     window.addEventListener("message", handler);
@@ -72,6 +80,7 @@ export function ChatPanel(): React.ReactElement {
     setInput("");
     setError(null);
     setMessages((prev) => [...prev, { role: "user", content: prompt }]);
+    setProgress(null);
     setLoading(true);
     acceptRun.current = true;
     vscode.postMessage({ command: "chat-request", prompt, chatHistory });
@@ -87,6 +96,7 @@ export function ChatPanel(): React.ReactElement {
     setInput("");
     setError(null);
     setLoading(false);
+    setProgress(null);
     setHistoryIndex(-1);
     setSavedInput("");
     vscode.postMessage({ command: "chat-new" });
@@ -161,7 +171,7 @@ export function ChatPanel(): React.ReactElement {
         {loading && (
           <div className="chat-message chat-message--assistant">
             <span className="chat-role">AI</span>
-            <span className="chat-loading">Thinking…</span>
+            <span className="chat-loading">{describeProgress(progress)}</span>
           </div>
         )}
         {error && <div className="chat-error">{error}</div>}

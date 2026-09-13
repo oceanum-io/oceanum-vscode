@@ -11,6 +11,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **New chat** button in the AI panel. It clears the conversation and starts a
   new one. A response still in progress is stopped, without a "Stopped."
   message in the new conversation.
+- **The AI panel says what the agent is doing** while it works — "Searching
+  the catalogue…", "Reading dataset details…", "Running the code…" — instead
+  of a static "Thinking…" for the whole request. The extension asks
+  `/api/chat` and `/api/chat/observe` for their `text/event-stream` form, and
+  Stop still ends a response mid-stream (OCE-175).
 
 ### Changed
 

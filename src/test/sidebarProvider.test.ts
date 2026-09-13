@@ -457,9 +457,15 @@ function openPanel() {
 const contexts = (posted: Posted[]) =>
   posted.filter((m) => m.command === "chat-context").map((m) => m.notebook);
 
-const requests: Array<{ body: Record<string, unknown>; signal: AbortSignal }> =
-  [];
+const requests: Array<{
+  body: Record<string, unknown>;
+  signal: AbortSignal;
+  accept?: string;
+}> = [];
 let respond: (body: unknown) => void = () => {};
+// Answer the pending request as an event stream of `frames`. With `hang`, the
+// stream then stays open until the request is aborted, as a slow run does.
+let respondStream: (frames: string[], hang?: boolean) => void = () => {};
 
 const settle = async () => {
   for (let i = 0; i < 20; i += 1) {
@@ -493,16 +499,68 @@ beforeEach(() => {
   };
   vi.stubGlobal(
     "fetch",
-    vi.fn((_url: string, init: { body: string; signal: AbortSignal }) => {
-      requests.push({ body: JSON.parse(init.body), signal: init.signal });
-      return new Promise((resolve, reject) => {
-        respond = (body) =>
-          resolve({ ok: true, status: 200, json: async () => body });
-        init.signal.addEventListener("abort", () =>
-          reject(new DOMException("aborted", "AbortError")),
-        );
-      });
-    }),
+    vi.fn(
+      (
+        _url: string,
+        init: {
+          body: string;
+          signal: AbortSignal;
+          headers: Record<string, string>;
+        },
+      ) => {
+        requests.push({
+          body: JSON.parse(init.body),
+          signal: init.signal,
+          accept: init.headers.Accept,
+        });
+        const aborted = () => new DOMException("aborted", "AbortError");
+        return new Promise((resolve, reject) => {
+          respond = (body) =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => "application/json" },
+              json: async () => body,
+            });
+          respondStream = (frames, hang = false) => {
+            const chunks = frames.map((f) => new TextEncoder().encode(f));
+            let index = 0;
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => "text/event-stream" },
+              body: {
+                getReader: () => ({
+                  read: () => {
+                    if (index < chunks.length) {
+                      return Promise.resolve({
+                        done: false,
+                        value: chunks[index++],
+                      });
+                    }
+                    if (!hang) {
+                      return Promise.resolve({ done: true, value: undefined });
+                    }
+                    // As with fetch: aborting the request fails the read in
+                    // flight.
+                    return new Promise((_ok, fail) => {
+                      if (init.signal.aborted) {
+                        fail(aborted());
+                      }
+                      init.signal.addEventListener("abort", () =>
+                        fail(aborted()),
+                      );
+                    });
+                  },
+                  releaseLock: () => {},
+                }),
+              },
+            });
+          };
+          init.signal.addEventListener("abort", () => reject(aborted()));
+        });
+      },
+    ),
   );
 });
 
@@ -1098,5 +1156,160 @@ describe("the context label", () => {
 
     setVisible(true);
     expect(contexts(posted)).toEqual(["a.ipynb", "renamed.ipynb"]);
+  });
+});
+
+const frame = (event: string, data: unknown) =>
+  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+const statuses = (posted: Posted[]) =>
+  posted.filter((m) => m.command === "chat-status").map((m) => m.progress);
+
+describe("progress while the agent works", () => {
+  it("asks for the event stream", async () => {
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    await settle();
+
+    expect(requests[0].accept).toBe("text/event-stream");
+  });
+
+  it("shows what the agent is doing, then its answer", async () => {
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "find waves", chatHistory: [] });
+    await settle();
+    respondStream([
+      frame("status", { phase: "generating" }),
+      ": keepalive\n\n",
+      frame("status", { phase: "tool", tool: "search_catalog" }),
+      frame("done", { message: "Found it.", blocks: [] }),
+    ]);
+    await settle();
+
+    expect(statuses(posted)).toEqual([
+      { phase: "generating" },
+      { phase: "tool", tool: "search_catalog" },
+    ]);
+    expect(posted.filter((m) => m.command === "chat-response")).toEqual([
+      {
+        command: "chat-response",
+        response: { message: "Found it.", blocks: [] },
+      },
+    ]);
+    expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
+
+  it("takes the answer from done, not from the events before it", async () => {
+    // Assembled from the stream, the answer would come out shorter than the
+    // agent's whenever a frame went missing, and look complete.
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    await settle();
+    respondStream([
+      frame("message", { message: "partial" }),
+      frame("done", { message: "The whole answer.", blocks: [] }),
+    ]);
+    await settle();
+
+    expect(posted.find((m) => m.command === "chat-response")).toEqual({
+      command: "chat-response",
+      response: { message: "The whole answer.", blocks: [] },
+    });
+  });
+
+  it("reports a failure the stream sends after it has opened", async () => {
+    // The status was already 200, so the failure can only arrive as an event.
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    await settle();
+    respondStream([
+      frame("status", { phase: "generating" }),
+      frame("error", {
+        detail: "The AI service is unavailable.",
+        status_code: 503,
+        code: "agent_unavailable",
+      }),
+    ]);
+    await settle();
+
+    expect(posted.at(-1)).toEqual({
+      command: "chat-error",
+      message: "Backend error: The AI service is unavailable.",
+    });
+    expect(posted.map((m) => m.command)).not.toContain("chat-response");
+  });
+
+  it("fails a stream that ends without its answer", async () => {
+    // A dropped connection, or a proxy closing a response that looked idle:
+    // shown as a failure, not as a shorter answer.
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    await settle();
+    respondStream([frame("status", { phase: "generating" })]);
+    await settle();
+
+    expect(posted.at(-1)).toEqual({
+      command: "chat-error",
+      message: "The response ended before it was complete.",
+    });
+  });
+
+  it("stops in the middle of the stream", async () => {
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "hi", chatHistory: [] });
+    await settle();
+    respondStream([frame("status", { phase: "generating" })], true);
+    await settle();
+    send({ command: "chat-stop" });
+    await settle();
+
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
+    expect(posted.map((m) => m.command)).not.toContain("chat-error");
+  });
+
+  it("says the code is running while the notebook runs it", async () => {
+    // The notebook's turn: the agent's last phase must not stay on screen
+    // claiming it is still looking something up.
+    state.config = { autoRunCode: true };
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "plot", chatHistory: [] });
+    await settle();
+    respondStream([
+      frame("status", { phase: "tool", tool: "get_datasource_info" }),
+      frame("done", { message: "Here.", blocks: [code("ds.plot()")] }),
+    ]);
+    await settle();
+
+    expect(statuses(posted)).toEqual([
+      { phase: "tool", tool: "get_datasource_info" },
+      { phase: "running" },
+    ]);
+  });
+
+  it("says the code is being added when nothing will run", async () => {
+    activate(notebook("a.ipynb", [[CODE, "x = 1"]]));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "plot", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("ds.plot()")] });
+    await settle();
+
+    expect(statuses(posted)).toEqual([{ phase: "placing" }]);
   });
 });
