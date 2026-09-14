@@ -1163,6 +1163,27 @@ describe("an answer's blocks in the chat", () => {
     expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
   });
 
+  it("of a run New chat replaced are not handed to the new chat", async () => {
+    // New chat is pressed while the notebook is refusing "one"; the old run's
+    // leftovers must not land under the new conversation's first answer.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    state.refuse = (text) => {
+      if (text === "one") {
+        send({ command: "chat-new" });
+        return true;
+      }
+      return false;
+    };
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(unplaced(posted)).toEqual([]);
+  });
+
   it("that Stop kept out are not handed to the chat when stopping fails the cell", async () => {
     // Cancelling the running cell can throw; that is still the user's Stop,
     // not a failure to place.

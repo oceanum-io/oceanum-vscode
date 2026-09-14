@@ -613,6 +613,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this._post({ command: "chat-status", progress });
         }
       };
+      // Blocks the notebook did not take, for the panel to show instead -- on
+      // the same terms, so a replaced run cannot add them to the new chat.
+      const report = (blocks: Block[]) => {
+        if (this._current === controller) {
+          this._post({ command: "chat-unplaced", blocks });
+        }
+      };
       const outcome = await runChatLoop(
         prompt,
         chatHistory,
@@ -649,7 +656,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 autoRun && response.blocks.some((b) => b.type === "code");
               status({ phase: runsCode ? "running" : "placing" });
             }
-            return this._place(placeInto, response, autoRun, signal);
+            return this._place(placeInto, response, autoRun, signal, report);
           },
           // One bubble per round, as it happens, so a chain of three steps
           // reads as three steps while it is still running.
@@ -760,14 +767,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *
    * The chat does not show the blocks, since they are here. So any block that
    * does not get here -- the notebook refused it, or opening the notebook or
-   * running an earlier cell failed -- is sent to the chat instead. Blocks that
-   * Stop kept out are not: the user chose not to have them.
+   * running an earlier cell failed -- goes to `report`, for the chat to show
+   * instead. Blocks that Stop kept out do not: the user chose not to have them.
    */
   private async _place(
     target: Target,
     response: OceanumResponse,
     autoRun: boolean,
     signal: AbortSignal,
+    report: (blocks: Block[]) => void,
   ): Promise<PlacedResponse> {
     const runs: PlacedResponse["runs"] = [];
     const unplaced: Block[] = [];
@@ -830,7 +838,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       throw err;
     } finally {
       if (unplaced.length > 0) {
-        this._post({ command: "chat-unplaced", blocks: unplaced });
+        report(unplaced);
       }
     }
   }

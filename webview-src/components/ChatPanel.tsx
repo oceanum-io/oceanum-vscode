@@ -9,6 +9,7 @@ import {
 } from "../responseToMessage";
 import { isStaleRunMessage } from "../runMessages";
 import { describeProgress } from "../progress";
+import { ChatBubble } from "./ChatBubble";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -166,13 +167,7 @@ export function ChatPanel(): React.ReactElement {
           </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`chat-message chat-message--${msg.role}`}>
-            <span className="chat-role">
-              {msg.role === "user" ? "You" : "AI"}
-            </span>
-            <pre className="chat-content">{msg.content}</pre>
-            {msg.unplaced && <pre className="chat-code">{msg.unplaced}</pre>}
-          </div>
+          <ChatBubble key={i} msg={msg} />
         ))}
         {loading && (
           <div className="chat-message chat-message--assistant">
