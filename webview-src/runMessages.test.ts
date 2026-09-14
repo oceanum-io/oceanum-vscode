@@ -10,6 +10,8 @@ const run: ExtToWebviewMessage[] = [
     command: "chat-status",
     progress: { phase: "tool", tool: "search_catalog" },
   },
+  // Blocks the old run's notebook refused belong under the old run's answer.
+  { command: "chat-unplaced", blocks: [{ type: "code", content: "late" }] },
   { command: "chat-done" },
   { command: "chat-stopped" },
   { command: "chat-error", message: "boom" },

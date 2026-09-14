@@ -2,7 +2,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
 import type { ChatMessage, ExtToWebviewMessage, Progress } from "../types";
-import { type Message, responseToMessage } from "../responseToMessage";
+import {
+  type Message,
+  responseToMessage,
+  withUnplaced,
+} from "../responseToMessage";
 import { isStaleRunMessage } from "../runMessages";
 import { describeProgress } from "../progress";
 
@@ -38,6 +42,8 @@ export function ChatPanel(): React.ReactElement {
         // observing cells, so this does not end "loading": Stop must stay
         // available until "chat-done".
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
+      } else if (msg.command === "chat-unplaced") {
+        setMessages((prev) => withUnplaced(prev, msg.blocks));
       } else if (msg.command === "chat-done") {
         setLoading(false);
         setProgress(null);
@@ -165,7 +171,7 @@ export function ChatPanel(): React.ReactElement {
               {msg.role === "user" ? "You" : "AI"}
             </span>
             <pre className="chat-content">{msg.content}</pre>
-            {msg.code && <pre className="chat-code">{msg.code}</pre>}
+            {msg.unplaced && <pre className="chat-code">{msg.unplaced}</pre>}
           </div>
         ))}
         {loading && (

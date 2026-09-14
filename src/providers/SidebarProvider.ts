@@ -6,6 +6,7 @@ import { getNonce } from "../utils/nonce";
 import type {
   WebviewToExtMessage,
   ExtToWebviewMessage,
+  Block,
   IWorkspaceSpec,
   ChatMessage,
   OceanumResponse,
@@ -756,6 +757,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * cells -- into the conversation's notebook, and, when auto-run is on, run
    * each code cell as it lands and report what it produced. Stop ends
    * placement between blocks and cancels the cell that is running.
+   *
+   * The chat does not show the blocks, since they are here. So any block that
+   * does not get here -- the notebook refused it, or opening the notebook or
+   * running an earlier cell failed -- is sent to the chat instead. Blocks that
+   * Stop kept out are not: the user chose not to have them.
    */
   private async _place(
     target: Target,
@@ -764,47 +770,69 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     signal: AbortSignal,
   ): Promise<PlacedResponse> {
     const runs: PlacedResponse["runs"] = [];
-    if (response.blocks.length === 0 || signal.aborted) {
-      return { runs };
-    }
-    // Every answer goes into the conversation's notebook, whichever tab is in
-    // front: that notebook is brought to the front -- opened again if it was
-    // closed -- so the user sees where it went. A replacement becomes where
-    // the rest of this run goes too, or every later round would make another.
-    const notebook = await this._open(target.uri);
-    target.uri = notebook.uri;
-    if (signal.aborted) {
-      return { runs };
-    }
-    // Below the selected cell when the user is working in this notebook --
-    // they chose the spot. Otherwise at the end: a selection in a notebook
-    // they are not looking at, or the first cell of one just reopened, is
-    // nobody's choice.
-    const userIsHere =
-      vscode.window.activeNotebookEditor?.notebook === notebook;
-    // Focus stays where it was, so a follow-up can be typed while cells land.
-    const editor = await vscode.window.showNotebookDocument(notebook, {
-      preserveFocus: true,
-    });
-    if (!userIsHere) {
-      editor.selection = new vscode.NotebookRange(
-        notebook.cellCount,
-        notebook.cellCount,
-      );
-    }
-    for (const block of response.blocks) {
+    const unplaced: Block[] = [];
+    // How many blocks have been through the notebook, taken or refused.
+    let tried = 0;
+    try {
+      if (response.blocks.length === 0 || signal.aborted) {
+        return { runs };
+      }
+      // Every answer goes into the conversation's notebook, whichever tab is
+      // in front: that notebook is brought to the front -- opened again if it
+      // was closed -- so the user sees where it went. A replacement becomes
+      // where the rest of this run goes too, or every later round would make
+      // another.
+      const notebook = await this._open(target.uri);
+      target.uri = notebook.uri;
       if (signal.aborted) {
-        break;
+        return { runs };
       }
-      // Through the editor shown above, not whichever is active: the user may
-      // click another tab while the answer is still landing.
-      const cell = await insertNotebookCell(editor, block.content, block.type);
-      if (block.type === "code" && autoRun && cell !== null) {
-        const outcome = await runCellAndHarvest(cell, signal);
-        runs.push({ code: block.content, ...outcome });
+      // Below the selected cell when the user is working in this notebook --
+      // they chose the spot. Otherwise at the end: a selection in a notebook
+      // they are not looking at, or the first cell of one just reopened, is
+      // nobody's choice.
+      const userIsHere =
+        vscode.window.activeNotebookEditor?.notebook === notebook;
+      // Focus stays where it was, so a follow-up can be typed while cells land.
+      const editor = await vscode.window.showNotebookDocument(notebook, {
+        preserveFocus: true,
+      });
+      if (!userIsHere) {
+        editor.selection = new vscode.NotebookRange(
+          notebook.cellCount,
+          notebook.cellCount,
+        );
+      }
+      for (const block of response.blocks) {
+        if (signal.aborted) {
+          break;
+        }
+        // Through the editor shown above, not whichever is active: the user
+        // may click another tab while the answer is still landing.
+        const cell = await insertNotebookCell(
+          editor,
+          block.content,
+          block.type,
+        );
+        tried += 1;
+        if (cell === null) {
+          unplaced.push(block);
+        } else if (block.type === "code" && autoRun) {
+          const outcome = await runCellAndHarvest(cell, signal);
+          runs.push({ code: block.content, ...outcome });
+        }
+      }
+      return { runs };
+    } catch (err: unknown) {
+      if (!signal.aborted) {
+        unplaced.push(...response.blocks.slice(tried));
+      }
+      throw err;
+    } finally {
+      if (unplaced.length > 0) {
+        this._post({ command: "chat-unplaced", blocks: unplaced });
       }
     }
-    return { runs };
   }
 
   private async _getToken(): Promise<string> {
