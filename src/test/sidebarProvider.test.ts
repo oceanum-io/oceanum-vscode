@@ -1163,6 +1163,35 @@ describe("an answer's blocks in the chat", () => {
     expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
   });
 
+  it("that the notebook refuses as Stop is pressed are still handed to the chat", async () => {
+    // Stop keeps the blocks after it out, but "two" was already refused, not
+    // withheld: without the chat it would be nowhere. Stop ends the run, not
+    // its claim on the panel, so its report still goes through.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    state.refuse = (text) => {
+      if (text === "two") {
+        send({ command: "chat-stop" });
+        return true;
+      }
+      return false;
+    };
+    respond({
+      message: "Here.",
+      blocks: [code("one"), code("two"), code("three")],
+    });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one"]);
+    expect(unplaced(posted)).toEqual([
+      { command: "chat-unplaced", blocks: [code("two")] },
+    ]);
+    expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
+  });
+
   it("of a run New chat replaced are not handed to the new chat", async () => {
     // New chat is pressed while the notebook is refusing "one"; the old run's
     // leftovers must not land under the new conversation's first answer.
