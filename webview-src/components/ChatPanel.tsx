@@ -2,9 +2,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
 import type { ChatMessage, ExtToWebviewMessage, Progress } from "../types";
-import { type Message, responseToMessage } from "../responseToMessage";
+import {
+  type Message,
+  responseToMessage,
+  withUnplaced,
+} from "../responseToMessage";
 import { isStaleRunMessage } from "../runMessages";
 import { describeProgress } from "../progress";
+import { ChatBubble } from "./ChatBubble";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -38,6 +43,8 @@ export function ChatPanel(): React.ReactElement {
         // observing cells, so this does not end "loading": Stop must stay
         // available until "chat-done".
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
+      } else if (msg.command === "chat-unplaced") {
+        setMessages((prev) => withUnplaced(prev, msg.blocks));
       } else if (msg.command === "chat-done") {
         setLoading(false);
         setProgress(null);
@@ -160,13 +167,7 @@ export function ChatPanel(): React.ReactElement {
           </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`chat-message chat-message--${msg.role}`}>
-            <span className="chat-role">
-              {msg.role === "user" ? "You" : "AI"}
-            </span>
-            <pre className="chat-content">{msg.content}</pre>
-            {msg.code && <pre className="chat-code">{msg.code}</pre>}
-          </div>
+          <ChatBubble key={i} msg={msg} />
         ))}
         {loading && (
           <div className="chat-message chat-message--assistant">

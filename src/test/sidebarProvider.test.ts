@@ -48,6 +48,13 @@ const state = vi.hoisted(() => {
     shown: [] as Array<{ path: string; preserveFocus?: boolean }>,
     inserted: [] as Array<{ path: string; index: number; text: string }>,
     afterInsert: undefined as (() => void) | undefined,
+    // A cell text the notebook refuses to take, as a read-only one does.
+    refuse: undefined as ((text: string) => boolean) | undefined,
+    // What opening or creating a notebook fails with, and running a cell.
+    openError: undefined as unknown,
+    runError: undefined as unknown,
+    // Called as a cell starts running, before `runError` is thrown.
+    duringRun: undefined as (() => void) | undefined,
     renameListeners: [] as Array<
       (event: { files: Array<{ oldUri: FakeUri; newUri: FakeUri }> }) => void
     >,
@@ -159,6 +166,9 @@ vi.mock("vscode", () => {
         }),
       },
       openNotebookDocument: vi.fn(async (what: unknown) => {
+        if (state.openError) {
+          throw state.openError;
+        }
         if (typeof what === "string") {
           state.created += 1;
           const fresh = state.fake!.notebook(
@@ -184,6 +194,14 @@ vi.mock("vscode", () => {
         async (edit: {
           entries: Array<{ uri: FakeUri; edits: CellEdit[] }>;
         }) => {
+          const refused = edit.entries.some(({ edits }) =>
+            edits.some(({ cells }) =>
+              cells.some((cell) => state.refuse?.(cell.value)),
+            ),
+          );
+          if (refused) {
+            return false;
+          }
           for (const { uri, edits } of edit.entries) {
             for (const { index, cells } of edits) {
               for (const cell of cells) {
@@ -219,6 +237,12 @@ vi.mock("vscode", () => {
           command: string,
           args?: { ranges: Array<{ start: number }>; document: FakeUri },
         ) => {
+          if (command === "notebook.cell.execute") {
+            state.duringRun?.();
+          }
+          if (command === "notebook.cell.execute" && state.runError) {
+            throw state.runError;
+          }
           if (command === "notebook.cell.execute" && args) {
             const cell = find(args.document)?.cellAt(args.ranges[0].start);
             if (cell) {
@@ -490,6 +514,10 @@ beforeEach(() => {
   state.shown = [];
   state.inserted = [];
   state.afterInsert = undefined;
+  state.refuse = undefined;
+  state.openError = undefined;
+  state.runError = undefined;
+  state.duringRun = undefined;
   state.renameListeners = [];
   state.openListeners = [];
   state.closeListeners = [];
@@ -1029,6 +1057,180 @@ describe("placing an answer", () => {
     ]);
     expect(contexts(posted)).toEqual(["Untitled-1.ipynb", "Untitled-2.ipynb"]);
     expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
+});
+
+describe("an answer's blocks in the chat", () => {
+  const unplaced = (posted: Posted[]) =>
+    posted.filter((m) => m.command === "chat-unplaced");
+
+  it("are not handed to the chat once they are in the notebook", async () => {
+    // The chat showed every code block as well as placing it, so each one
+    // appeared twice.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    respond({
+      message: "Here.",
+      blocks: [code("ds = query()"), { type: "markdown", content: "# Notes" }],
+    });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual([
+      "ds = query()",
+      "# Notes",
+    ]);
+    expect(unplaced(posted)).toEqual([]);
+    expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
+
+  it("that the notebook refuses are handed to the chat, and only those", async () => {
+    // Otherwise a read-only notebook loses the code: it is not in the notebook,
+    // and the chat no longer repeats what it places.
+    activate(notebook("a.ipynb"));
+    state.refuse = (text) => text === "two";
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    respond({
+      message: "Here.",
+      blocks: [code("one"), code("two"), code("three")],
+    });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one", "three"]);
+    expect(unplaced(posted)).toEqual([
+      { command: "chat-unplaced", blocks: [code("two")] },
+    ]);
+  });
+
+  it("are all handed to the chat when the notebook cannot be opened", async () => {
+    const { posted, send } = openPanel();
+    send({ command: "chat-new" });
+    await settle();
+    // The conversation's notebook is gone, and making a replacement fails.
+    close(state.documents[0]);
+    state.openError = new Error("disk full");
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(unplaced(posted)).toEqual([
+      { command: "chat-unplaced", blocks: [code("one"), code("two")] },
+    ]);
+    expect(posted.at(-1)?.command).toBe("chat-error");
+  });
+
+  it("that reached the notebook before a failure are not handed to the chat", async () => {
+    // "one" is in the notebook when running it fails; only "two" is not.
+    state.config = { autoRunCode: true };
+    activate(notebook("a.ipynb"));
+    state.runError = new Error("kernel died");
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one"]);
+    expect(unplaced(posted)).toEqual([
+      { command: "chat-unplaced", blocks: [code("two")] },
+    ]);
+  });
+
+  it("that Stop kept out of the notebook are not handed to the chat", async () => {
+    // The user chose not to have them.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    state.afterInsert = () => {
+      state.afterInsert = undefined;
+      send({ command: "chat-stop" });
+    };
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one"]);
+    expect(unplaced(posted)).toEqual([]);
+    expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
+  });
+
+  it("that the notebook refuses as Stop is pressed are still handed to the chat", async () => {
+    // Stop keeps the blocks after it out, but "two" was already refused, not
+    // withheld: without the chat it would be nowhere. Stop ends the run, not
+    // its claim on the panel, so its report still goes through.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    state.refuse = (text) => {
+      if (text === "two") {
+        send({ command: "chat-stop" });
+        return true;
+      }
+      return false;
+    };
+    respond({
+      message: "Here.",
+      blocks: [code("one"), code("two"), code("three")],
+    });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one"]);
+    expect(unplaced(posted)).toEqual([
+      { command: "chat-unplaced", blocks: [code("two")] },
+    ]);
+    expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
+  });
+
+  it("of a run New chat replaced are not handed to the new chat", async () => {
+    // New chat is pressed while the notebook is refusing "one"; the old run's
+    // leftovers must not land under the new conversation's first answer.
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    state.refuse = (text) => {
+      if (text === "one") {
+        send({ command: "chat-new" });
+        return true;
+      }
+      return false;
+    };
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(unplaced(posted)).toEqual([]);
+  });
+
+  it("that Stop kept out are not handed to the chat when stopping fails the cell", async () => {
+    // Cancelling the running cell can throw; that is still the user's Stop,
+    // not a failure to place.
+    state.config = { autoRunCode: true };
+    activate(notebook("a.ipynb"));
+    const { posted, send } = openPanel();
+
+    send({ command: "chat-request", prompt: "go", chatHistory: [] });
+    await settle();
+    // Stop arrives while "one" runs, and cancelling it throws.
+    state.duringRun = () => send({ command: "chat-stop" });
+    state.runError = new Error("cancelled");
+    respond({ message: "Here.", blocks: [code("one"), code("two")] });
+    await settle();
+
+    expect(state.inserted.map((i) => i.text)).toEqual(["one"]);
+    expect(unplaced(posted)).toEqual([]);
+    expect(posted.at(-1)).toEqual({ command: "chat-stopped" });
   });
 });
 
