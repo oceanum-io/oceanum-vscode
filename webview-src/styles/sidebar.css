@@ -192,6 +192,42 @@ a:hover {
   overflow: hidden;
 }
 
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.chat-context {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.chat-new {
+  flex-shrink: 0;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: none;
+  border-radius: 2px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chat-new:hover {
+  background: var(
+    --vscode-button-secondaryHoverBackground,
+    var(--vscode-toolbar-hoverBackground)
+  );
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;

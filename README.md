@@ -40,7 +40,7 @@ my_dataset = datamesh.query(
 
 ### Oceanum AI Chat (enabled accounts only)
 
-The AI panel at the bottom of the sidebar lets you ask natural-language questions about Datamesh data. The AI reads your current notebook cells as context and inserts generated code directly into the active cell.
+The AI panel at the bottom of the sidebar lets you ask natural-language questions about Datamesh data. Each chat has its own notebook: the one in the active tab when the chat starts, or a new notebook when that tab is not one. The AI reads that notebook's cells as context and inserts its answers into it as new cells, bringing it to the front (and opening it again if it was closed). **New chat** clears the conversation and starts again with the notebook in the active tab.
 
 ## Requirements
 
@@ -228,7 +228,7 @@ Datamesh iframe
   → sidebar React app (window message event)
 ```
 
-AI chat requests flow in the opposite direction, from the sidebar webview through the extension host (which makes the `https://ai.oceanum.io` fetch — avoiding browser CORS restrictions), then back to the webview and into the active notebook.
+AI chat requests flow in the opposite direction, from the sidebar webview through the extension host (which makes the `https://ai.oceanum.io` fetch — avoiding browser CORS restrictions), then back to the webview and into the chat's notebook.
 
 ## License
 

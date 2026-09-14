@@ -45,6 +45,16 @@ export interface ChatMessage {
 }
 
 /**
+ * What the agent is doing, from a streamed response's `status` event (OCE-175)
+ * -- or, for `running` and `placing`, what the notebook is doing, which the
+ * extension reports itself. `tool` names the lookup when `phase` is `tool`.
+ */
+export interface Progress {
+  phase: string;
+  tool?: string;
+}
+
+/**
  * What one code cell did when it ran, in the shape `/api/chat/observe` takes.
  * `message` is the agent's explanation for the response that carried the code.
  */
@@ -64,7 +74,10 @@ export type WebviewToExtMessage =
   | { command: "get-token-status" }
   | { command: "get-notebook-context" }
   | { command: "chat-request"; prompt: string; chatHistory: ChatMessage[] }
-  | { command: "chat-stop" };
+  | { command: "chat-stop" }
+  // Start a new conversation: end any run in flight WITHOUT reporting it, and
+  // pin the notebook in the active tab (if any) as the conversation's context.
+  | { command: "chat-new" };
 
 // Messages sent from extension host → sidebar webview
 export type ExtToWebviewMessage =
@@ -76,4 +89,10 @@ export type ExtToWebviewMessage =
   // run is its own message; the webview stays "thinking" until one of these.
   | { command: "chat-done" }
   | { command: "chat-stopped" }
-  | { command: "chat-error"; message: string };
+  | { command: "chat-error"; message: string }
+  // The notebook the current conversation is pinned to, by file name, or null
+  // when it has none. Sent whenever the pin changes.
+  | { command: "chat-context"; notebook: string | null }
+  // What the current run is doing, for the panel to show instead of a static
+  // "Thinking…". The panel clears it itself when the run ends.
+  | { command: "chat-status"; progress: Progress };

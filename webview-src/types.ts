@@ -46,6 +46,12 @@ export interface ChatMessage {
   content: string;
 }
 
+/** What the agent -- or, for `running` and `placing`, the notebook -- is doing. */
+export interface Progress {
+  phase: string;
+  tool?: string;
+}
+
 export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
@@ -55,4 +61,9 @@ export type ExtToWebviewMessage =
   // run is its own message; the webview stays "thinking" until one of these.
   | { command: "chat-done" }
   | { command: "chat-stopped" }
-  | { command: "chat-error"; message: string };
+  | { command: "chat-error"; message: string }
+  // The notebook the current conversation is pinned to, by file name, or null
+  // when it has none. Sent whenever the pin changes.
+  | { command: "chat-context"; notebook: string | null }
+  // What the current run is doing, shown instead of a static "Thinking…".
+  | { command: "chat-status"; progress: Progress };

@@ -6,17 +6,58 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+
+- **New chat** button in the AI panel. It clears the conversation and starts a
+  new one. A response still in progress is stopped, without a "Stopped."
+  message in the new conversation.
+- **The AI panel says what the agent is doing** while it works — "Searching
+  the catalogue…", "Reading dataset details…", "Running the code…" — instead
+  of a static "Thinking…" for the whole request. The extension asks
+  `/api/chat` and `/api/chat/observe` for their `text/event-stream` form, and
+  Stop still ends a response mid-stream (OCE-175).
+
+### Changed
+
+- **Each chat has its own notebook.** It is the notebook in the active tab when
+  the chat starts (with New chat, or the first message), or, when that tab is
+  not a notebook, a new one: created beside the file in the active tab, else in
+  the first workspace folder, else untitled when no folder is open. The panel
+  shows its name. Its cells are the chat's context, and every answer's cells go
+  into it whichever tab is in front: it is brought to the front, opened again
+  if it was closed, and followed if it is renamed, moved, or saved from untitled. If it was deleted,
+  a new notebook takes its place when an answer has cells to place.
+- Answers go below the selected cell when you are working in the chat's
+  notebook, and at its end otherwise. Focus stays in the chat.
+- Markdown cells are sent as context along with code cells.
+
 ## [0.4.0]
 
 ### Removed
 
-- `oceanum.auth0Domain`, `oceanum.auth0ClientId` and `oceanum.auth0Audience`.
-  Which tenant issues the token, which application asks for it and which API it
-  is minted for are properties of the Oceanum deployment, not user preferences:
-  a wrong value yields a token no Oceanum service accepts, and the failure looks
-  like a login bug. The domain and client ID already fell back to the built-in
-  values, and the audience never had one, so sign-in is unchanged unless you had
-  overridden a setting. The values now live in `src/constants.ts`.
+- **Auth0 sign-in.** The `Oceanum: Sign In` and `Oceanum: Sign Out` commands,
+  the device-authorization flow behind them, and the
+  `oceanum.auth0Domain` / `oceanum.auth0ClientId` / `oceanum.auth0Audience`
+  settings are gone. The extension now authenticates with the Datamesh token
+  alone.
+
+  It was a second credential for the same access. The AI sidebar never used the
+  Auth0 token — it sends the Datamesh token as `X-Datamesh-Token` — and the
+  embedded Datamesh UI treats the two as alternatives for one header, using
+  `Bearer <jwt>` when an Auth0 token is present and `Token <datamesh token>`
+  otherwise. Removing it halves what can leak or expire and drops a whole
+  refresh/expiry code path.
+
+  The panel's REST calls therefore go out as `Token <datamesh token>` rather
+  than `Bearer <jwt>`. The Datamesh gateway accepts both.
+
+  **What you need to do:** if you signed in rather than configuring a token,
+  set one with `Oceanum: Configure Token` (get it from
+  [home.oceanum.io/account](https://home.oceanum.io/account)). Opening the
+  Datamesh UI without a token now prompts for one, as signing in used to.
+  Access and refresh tokens stored by earlier versions are deleted from secret
+  storage on first activation. If you had set any `oceanum.auth0*` value, VS
+  Code will flag it as an unknown setting until you remove the line.
 
 ## [0.3.0]
 
