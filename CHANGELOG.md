@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Added
 
 - **New chat** button in the AI panel. It clears the conversation and starts a
@@ -30,6 +32,19 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Answers go below the selected cell when you are working in the chat's
   notebook, and at its end otherwise. Focus stays in the chat.
 - Markdown cells are sent as context along with code cells.
+- **The chat input follows the conversation.** It is at the top of an empty
+  chat and just under the latest answer as the chat grows, instead of pinned
+  to the bottom of the panel.
+
+### Fixed
+
+- **An answer's code is no longer shown twice.** It goes into the notebook
+  only; the chat shows the agent's message. A block appears in the chat only
+  when it could not be placed: the notebook refused it (for example, it is
+  read-only) or could not be opened.
+- A notebook created for a chat is never written over an existing file.
+- The chat's conversation, input and scroll position survive switching
+  between the Workspace and AI Chat tabs.
 
 ## [0.4.0]
 
