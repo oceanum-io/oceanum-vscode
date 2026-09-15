@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -32,12 +32,17 @@ jobs:
       - name: Build
         run: npm run vscode:prepublish
 
+      # vsce is pinned: unpinned, `npx` took 4.0.0 the day it was released and
+      # every publish hung for 180s on the Marketplace handshake ("Request
+      # timeout: /_apis/gallery"). 4.0.0 requires Node >= 22 and rewrote the
+      # upload; 3.9.x is the line that published 0.2.0. Bump it deliberately,
+      # with a publish to prove it.
       - name: Publish to VS Code Marketplace
         run: |
           if [ "${{ inputs.pre_release }}" = "true" ]; then
-            npx @vscode/vsce publish --pre-release
+            npx @vscode/vsce@3.9.2 publish --pre-release
           else
-            npx @vscode/vsce publish
+            npx @vscode/vsce@3.9.2 publish
           fi
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
