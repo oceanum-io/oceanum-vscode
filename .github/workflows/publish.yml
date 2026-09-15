@@ -32,20 +32,60 @@ jobs:
       - name: Build
         run: npm run vscode:prepublish
 
-      # vsce is pinned: unpinned, `npx` took 4.0.0 the day it was released and
-      # every publish hung for 180s on the Marketplace handshake ("Request
-      # timeout: /_apis/gallery"). 4.0.0 requires Node >= 22 and rewrote the
-      # upload; 3.9.x is the line that published 0.2.0. Bump it deliberately,
-      # with a publish to prove it.
+      # The Marketplace's gallery call hangs often enough to block a release:
+      # it returns nothing for 180s, typed-rest-client gives up ("Request
+      # timeout: /_apis/gallery"), and vsce does not retry the publish
+      # (microsoft/vscode-vsce#926). So retry it here. --skip-duplicates makes
+      # a retry safe if an earlier attempt landed after its client gave up:
+      # vsce then reports the version exists and exits 0.
+      #
+      # vsce is pinned for a reproducible release. 3.9.x published 0.2.0; 4.0.0
+      # needs Node >= 22. Bump deliberately, with a publish to prove it.
       - name: Publish to VS Code Marketplace
         run: |
           if [ "${{ inputs.pre_release }}" = "true" ]; then
-            npx @vscode/vsce@3.9.2 publish --pre-release
+            set -- publish --pre-release --skip-duplicates
           else
-            npx @vscode/vsce@3.9.2 publish
+            set -- publish --skip-duplicates
           fi
+          for attempt in 1 2 3 4; do
+            echo "::group::vsce attempt $attempt"
+            if npx @vscode/vsce@3.9.2 "$@"; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt $attempt failed"
+            sleep $((attempt * 30))
+          done
+          echo "::error::vsce publish failed on every attempt"
+          exit 1
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      # The publish above can exit 0 without the version being live, so say
+      # plainly whether the Marketplace serves it. Read-only and unauthenticated.
+      - name: Verify the Marketplace serves this version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          for attempt in 1 2 3 4 5 6; do
+            if npx @vscode/vsce@3.9.2 show oceanum.oceanum --json |
+              node -e "
+                let raw = '';
+                process.stdin.on('data', (d) => (raw += d));
+                process.stdin.on('end', () => {
+                  const listed = JSON.parse(raw).versions.map((v) => v.version);
+                  console.log('listed:', listed.slice(0, 3).join(', '));
+                  process.exit(listed.includes(process.argv[1]) ? 0 : 1);
+                });
+              " "$version"; then
+              echo "Marketplace serves $version"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::$version is not on the Marketplace"
+          exit 1
 
       - name: Publish to Open VSX Registry
         run: npx ovsx publish --pat ${{ secrets.OVSX_PAT }}
