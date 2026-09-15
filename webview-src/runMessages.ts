@@ -4,6 +4,7 @@ import type { ExtToWebviewMessage } from "./types";
 // Messages that belong to a chat run, as opposed to panel state.
 const RUN_MESSAGES = new Set<ExtToWebviewMessage["command"]>([
   "chat-response",
+  "chat-unplaced",
   "chat-status",
   "chat-done",
   "chat-stopped",

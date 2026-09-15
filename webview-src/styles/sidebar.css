@@ -296,8 +296,7 @@ a:hover {
 .chat-input-area {
   display: flex;
   gap: 4px;
-  padding: 8px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 4px 12px 8px;
 }
 
 .chat-input {

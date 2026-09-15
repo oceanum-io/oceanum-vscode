@@ -63,7 +63,7 @@ export async function insertNotebookCell(
   ]);
   // A refused edit (read-only or closed notebook) leaves whatever cell was at
   // `insertIndex`; returning it would run the user's own cell as the agent's.
-  // Say so: the chat still shows the code, and nothing else explains why it
+  // Say so: the chat shows the block instead, and nothing else explains why it
   // never appeared in the notebook.
   if (!(await vscode.workspace.applyEdit(edit))) {
     vscode.window.showWarningMessage(

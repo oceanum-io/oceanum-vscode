@@ -2,9 +2,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { vscode } from "../vscode";
 import type { ChatMessage, ExtToWebviewMessage, Progress } from "../types";
-import { type Message, responseToMessage } from "../responseToMessage";
+import {
+  type Message,
+  responseToMessage,
+  withUnplaced,
+} from "../responseToMessage";
 import { isStaleRunMessage } from "../runMessages";
 import { describeProgress } from "../progress";
+import { ChatBubble } from "./ChatBubble";
 
 export function ChatPanel(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -38,6 +43,8 @@ export function ChatPanel(): React.ReactElement {
         // observing cells, so this does not end "loading": Stop must stay
         // available until "chat-done".
         setMessages((prev) => [...prev, responseToMessage(msg.response)]);
+      } else if (msg.command === "chat-unplaced") {
+        setMessages((prev) => withUnplaced(prev, msg.blocks));
       } else if (msg.command === "chat-done") {
         setLoading(false);
         setProgress(null);
@@ -152,21 +159,8 @@ export function ChatPanel(): React.ReactElement {
       </div>
 
       <div className="chat-messages">
-        {messages.length === 0 && (
-          <div className="oceanum-empty">
-            Ask Oceanum AI to query and analyse Datamesh data. Answers go into
-            this chat&apos;s notebook: the one in the active tab when the chat
-            starts, or a new one.
-          </div>
-        )}
         {messages.map((msg, i) => (
-          <div key={i} className={`chat-message chat-message--${msg.role}`}>
-            <span className="chat-role">
-              {msg.role === "user" ? "You" : "AI"}
-            </span>
-            <pre className="chat-content">{msg.content}</pre>
-            {msg.code && <pre className="chat-code">{msg.code}</pre>}
-          </div>
+          <ChatBubble key={i} msg={msg} />
         ))}
         {loading && (
           <div className="chat-message chat-message--assistant">
@@ -175,36 +169,45 @@ export function ChatPanel(): React.ReactElement {
           </div>
         )}
         {error && <div className="chat-error">{error}</div>}
-        <div ref={endRef} />
-      </div>
 
-      <div className="chat-input-area">
-        <textarea
-          className="chat-input"
-          rows={3}
-          placeholder="Ask Oceanum AI… (Enter to send, Shift+Enter for newline)"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={loading}
-        />
-        {loading ? (
-          <button
-            className="chat-send"
-            onClick={() => vscode.postMessage({ command: "chat-stop" })}
-            title="Stop the current response"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            className="chat-send"
-            onClick={submit}
-            disabled={!input.trim()}
-          >
-            Send
-          </button>
+        {/* Part of the conversation, not pinned to the bottom of the panel: at
+            the top of an empty chat, and just under the latest answer after. */}
+        <div className="chat-input-area">
+          <textarea
+            className="chat-input"
+            rows={3}
+            placeholder="Ask Oceanum AI… (Enter to send, Shift+Enter for newline)"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={loading}
+          />
+          {loading ? (
+            <button
+              className="chat-send"
+              onClick={() => vscode.postMessage({ command: "chat-stop" })}
+              title="Stop the current response"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="chat-send"
+              onClick={submit}
+              disabled={!input.trim()}
+            >
+              Send
+            </button>
+          )}
+        </div>
+        {messages.length === 0 && (
+          <div className="oceanum-empty">
+            Ask Oceanum AI to query and analyse Datamesh data. Answers go into
+            this chat&apos;s notebook: the one in the active tab when the chat
+            starts, or a new one.
+          </div>
         )}
+        <div ref={endRef} />
       </div>
     </div>
   );

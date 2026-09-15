@@ -85,6 +85,9 @@ export type ExtToWebviewMessage =
   | { command: "token-status"; hasToken: boolean }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
+  // The blocks of the latest response that did not reach the notebook. The
+  // chat does not repeat what the notebook has, so it shows only these.
+  | { command: "chat-unplaced"; blocks: Block[] }
   // A request can carry several responses (one per round), so the end of the
   // run is its own message; the webview stays "thinking" until one of these.
   | { command: "chat-done" }
