@@ -1,0 +1,67 @@
+name: Publish diagnostics
+
+# Temporary, round 2. The token authenticates to Azure DevOps (profile GET 200
+# in 0.5s) but every authenticated Marketplace gallery call hangs with zero
+# bytes. These probes separate transport (IPv6, HTTP/2), endpoint, and how the
+# service answers when told not to redirect to a sign-in page.
+# Status codes and timings only; the token is never printed.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      PAT: ${{ secrets.VSCE_PAT }}
+      GALLERY: https://marketplace.visualstudio.com/_apis/gallery
+    steps:
+      - name: Auth, told not to redirect to sign-in
+        run: |
+          curl -sS -o /dev/null -m 40 -u ":$PAT" \
+            -w 'suppress-redirect publisher GET: http %{http_code} in %{time_total}s\n' \
+            -H 'X-TFS-FedAuthRedirect: Suppress' \
+            -H 'Accept: application/json;api-version=3.0-preview.1' \
+            "$GALLERY/publishers/oceanum" || echo "curl exit $?"
+
+      - name: Auth over IPv4 only
+        run: |
+          curl -sS -4 -o /dev/null -m 40 -u ":$PAT" \
+            -w 'ipv4 publisher GET: http %{http_code} in %{time_total}s\n' \
+            -H 'Accept: application/json;api-version=3.0-preview.1' \
+            "$GALLERY/publishers/oceanum" || echo "curl exit $?"
+
+      - name: Auth over HTTP/1.1
+        run: |
+          curl -sS --http1.1 -o /dev/null -m 40 -u ":$PAT" \
+            -w 'http1.1 publisher GET: http %{http_code} in %{time_total}s\n' \
+            -H 'Accept: application/json;api-version=3.0-preview.1' \
+            "$GALLERY/publishers/oceanum" || echo "curl exit $?"
+
+      - name: Auth against the securityroles endpoint (what vsce verify-pat uses)
+        run: |
+          curl -sS -o /dev/null -m 40 -u ":$PAT" \
+            -w 'securityroles GET: http %{http_code} in %{time_total}s\n' \
+            -H 'Accept: application/json;api-version=5.0-preview.1' \
+            'https://marketplace.visualstudio.com/_apis/securityroles/scopes/gallery.publisher/roleassignments/resources/oceanum' \
+            || echo "curl exit $?"
+
+      - name: Auth against the gallery extension query (POST)
+        run: |
+          curl -sS -o /dev/null -m 40 -u ":$PAT" \
+            -w 'auth extensionquery POST: http %{http_code} in %{time_total}s\n' \
+            -H 'Accept: application/json;api-version=3.0-preview.1' \
+            -H 'Content-Type: application/json' \
+            -X POST "$GALLERY/extensionquery" \
+            -d '{"filters":[{"criteria":[{"filterType":7,"value":"oceanum.oceanum"}]}],"flags":914}' \
+            || echo "curl exit $?"
+
+      - name: A wrong token, for comparison (how a bad token is answered)
+        run: |
+          curl -sS -o /dev/null -m 40 -u ":not-a-real-token" \
+            -w 'bogus-token publisher GET: http %{http_code} in %{time_total}s\n' \
+            -H 'Accept: application/json;api-version=3.0-preview.1' \
+            "$GALLERY/publishers/oceanum" || echo "curl exit $?"
+
+      - name: vsce verify-pat, with its own error message
+        run: npx --yes @vscode/vsce@3.9.2 verify-pat oceanum || echo "verify-pat exit $?"
+        timeout-minutes: 5
