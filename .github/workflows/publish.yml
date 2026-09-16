@@ -32,6 +32,18 @@ jobs:
       - name: Build
         run: npm run vscode:prepublish
 
+      # Publishing with a token the Marketplace does not accept for this
+      # publisher does not fail: the gallery call hangs for 180s and vsce
+      # reports a timeout, four times over. verify-pat asks the one question
+      # that matters and answers in a second, with the real reason (for a token
+      # the Marketplace treats as anonymous: "TF400813: The user
+      # 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' is not authorized to access this
+      # resource").
+      - name: Verify the token can manage the publisher
+        run: npx @vscode/vsce@3.9.2 verify-pat oceanum
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
       # The Marketplace's gallery call hangs often enough to block a release:
       # it returns nothing for 180s, typed-rest-client gives up ("Request
       # timeout: /_apis/gallery"), and vsce does not retry the publish
