@@ -35,7 +35,7 @@ jobs:
       # The Marketplace's gallery call hangs often enough to block a release:
       # it returns nothing for 180s, typed-rest-client gives up ("Request
       # timeout: /_apis/gallery"), and vsce does not retry the publish
-      # (microsoft/vscode-vsce#926). So retry it here. --skip-duplicates makes
+      # (microsoft/vscode-vsce#926). So retry it here. --skip-duplicate makes
       # a retry safe if an earlier attempt landed after its client gave up:
       # vsce then reports the version exists and exits 0.
       #
@@ -44,9 +44,9 @@ jobs:
       - name: Publish to VS Code Marketplace
         run: |
           if [ "${{ inputs.pre_release }}" = "true" ]; then
-            set -- publish --pre-release --skip-duplicates
+            set -- publish --pre-release --skip-duplicate
           else
-            set -- publish --skip-duplicates
+            set -- publish --skip-duplicate
           fi
           for attempt in 1 2 3 4; do
             echo "::group::vsce attempt $attempt"
