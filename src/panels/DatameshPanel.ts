@@ -16,6 +16,7 @@ export class DatameshPanel {
     context: vscode.ExtensionContext,
     onWorkspaceModify: WorkspaceModifyHandler,
     initialToken: string,
+    initialAccessToken: string,
   ) {
     this._onWorkspaceModify = onWorkspaceModify;
 
@@ -39,7 +40,10 @@ export class DatameshPanel {
       ),
     };
 
-    this._panel.webview.html = this._buildHtml(initialToken);
+    this._panel.webview.html = this._buildHtml(
+      initialToken,
+      initialAccessToken,
+    );
 
     this._panel.webview.onDidReceiveMessage(
       (msg) => {
@@ -66,19 +70,24 @@ export class DatameshPanel {
     context: vscode.ExtensionContext,
     onWorkspaceModify: WorkspaceModifyHandler,
     initialToken: string,
+    initialAccessToken: string,
   ): DatameshPanel {
     if (DatameshPanel._instance) {
       // Update the callback so the caller always gets fresh routing
       DatameshPanel._instance._onWorkspaceModify = onWorkspaceModify;
       DatameshPanel._instance._panel.reveal();
-      // Re-send the token in case it changed since the panel was first opened
+      // Re-send tokens in case they changed since the panel was first opened
       DatameshPanel._instance.updateToken(initialToken);
+      if (initialAccessToken) {
+        DatameshPanel._instance.updateAccessToken(initialAccessToken);
+      }
       return DatameshPanel._instance;
     }
     DatameshPanel._instance = new DatameshPanel(
       context,
       onWorkspaceModify,
       initialToken,
+      initialAccessToken,
     );
     return DatameshPanel._instance;
   }
@@ -90,7 +99,14 @@ export class DatameshPanel {
     });
   }
 
-  private _buildHtml(initialToken: string): string {
+  updateAccessToken(accessToken: string): void {
+    void this._panel.webview.postMessage({
+      source: "oceanum-app",
+      accessToken,
+    });
+  }
+
+  private _buildHtml(initialToken: string, initialAccessToken: string): string {
     const nonce = getNonce();
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -112,14 +128,11 @@ export class DatameshPanel {
     const vscode = acquireVsCodeApi();
     const frame = document.getElementById('datamesh-frame');
     const initialToken = ${JSON.stringify(initialToken)};
+    const initialAccessToken = ${JSON.stringify(initialAccessToken)};
 
     frame.addEventListener('load', function() {
       const payload = { source: 'oceanum-app', datameshToken: initialToken };
-      console.log('[oceanum-debug] webview → iframe (load): posting payload', {
-        hasDatameshToken: !!initialToken,
-        datameshTokenLength: (initialToken || '').length,
-        targetOrigin: '${DATAMESH_UI_URL}'
-      });
+      if (initialAccessToken) payload.accessToken = initialAccessToken;
       frame.contentWindow.postMessage(payload, '${DATAMESH_UI_URL}');
     });
 
@@ -130,16 +143,11 @@ export class DatameshPanel {
         vscode.postMessage(event.data);
       } else if (event.source !== frame.contentWindow) {
         // Message from extension host — forward token updates to iframe
-        if (event.data.datameshToken !== undefined) {
-          console.log('[oceanum-debug] webview relay → iframe: forwarding', {
-            hasDatameshToken: event.data.datameshToken !== undefined
-          });
+        if (event.data.datameshToken !== undefined || event.data.accessToken !== undefined) {
           frame.contentWindow.postMessage(
             { source: 'oceanum-app', ...event.data },
             '${DATAMESH_UI_URL}'
           );
-        } else {
-          console.log('[oceanum-debug] webview relay: ignoring message (no token fields)', event.data);
         }
       }
     });

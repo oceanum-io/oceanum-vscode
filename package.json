@@ -52,6 +52,14 @@
       {
         "command": "oceanum.setToken",
         "title": "Oceanum: Configure Token"
+      },
+      {
+        "command": "oceanum.login",
+        "title": "Oceanum: Sign In"
+      },
+      {
+        "command": "oceanum.signOut",
+        "title": "Oceanum: Sign Out"
       }
     ],
     "viewsContainers": {

@@ -61,12 +61,20 @@ Run **Oceanum: Configure Token** from the Command Palette (`Ctrl+Shift+P` / `Cmd
 
 Alternatively, paste it directly into `oceanum.datameshToken` in Settings (`File → Preferences → Settings`), though this stores it in plain text.
 
+### Signing in
+
+Run **Oceanum: Sign In**. A browser tab opens on Oceanum.io; check that the code it shows matches the one in the VS Code notification, and sign in as usual. There is no callback to your machine -- the extension uses the OAuth device flow -- so it works the same over Remote-SSH, in a dev container or in a Codespace. Tokens are kept in VS Code's encrypted secrets store and refreshed for you; **Oceanum: Sign Out** removes them.
+
+A Datamesh token is enough for the Datamesh UI and the AI panel. Signing in is what identifies *you*, which anything stored under your name on Oceanum needs.
+
 ## Commands
 
 | Command | Description |
 |---|---|
 | `Oceanum: Open Datamesh UI` | Open the Datamesh browser panel |
 | `Oceanum: Configure Token` | Set your Datamesh token securely |
+| `Oceanum: Sign In` | Sign in to Oceanum.io in your browser |
+| `Oceanum: Sign Out` | Sign out and delete the stored tokens |
 
 ---
 
