@@ -52,9 +52,29 @@ export interface Progress {
   tool?: string;
 }
 
+/** A notebook stored on Oceanum.io, as the Notebooks tab lists it. */
+export interface StoredNotebook {
+  id: string;
+  name: string;
+  description: string | null;
+  modified: string;
+}
+
+/** What the Notebooks tab shows. */
+export type NotebooksState =
+  | { state: "signed-out" }
+  | {
+      state: "ready";
+      email: string;
+      mine: StoredNotebook[];
+      shared: StoredNotebook[];
+    }
+  | { state: "error"; email: string; message: string };
+
 export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
+  | { command: "notebooks"; notebooks: NotebooksState }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
   // The blocks of the latest response that did not reach the notebook. The

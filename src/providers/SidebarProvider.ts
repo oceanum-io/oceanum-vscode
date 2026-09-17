@@ -2,6 +2,9 @@
 import * as vscode from "vscode";
 import { MAX_OBSERVE_ROUNDS, OCEANUM_AI_BACKEND_URL } from "../constants";
 import { COMMANDS } from "../commands";
+import { NOTEBOOK_SITE_URL, SPECS_URL } from "../constants";
+import { StoredNotebooks } from "../notebooks/storedNotebooks";
+import { vscodeHost } from "../notebooks/vscodeHost";
 import { getNonce } from "../utils/nonce";
 import type {
   WebviewToExtMessage,
@@ -236,7 +239,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // opens its file copy shortly before the untitled one closes.
   private _openedAt = new Map<string, number>();
 
-  constructor(private readonly _context: vscode.ExtensionContext) {}
+  // Notebooks stored on Oceanum.io, for the Notebooks tab.
+  private readonly _notebooks: StoredNotebooks;
+
+  constructor(private readonly _context: vscode.ExtensionContext) {
+    this._notebooks = new StoredNotebooks({
+      host: vscodeHost(_context),
+      specsUrl: SPECS_URL,
+      notebookSiteUrl: NOTEBOOK_SITE_URL,
+    });
+  }
+
+  /**
+   * Re-list the stored notebooks and tell the webview. Called when the tab asks, and
+   * whenever signing in or out changes whether there is anything to list.
+   */
+  async refreshNotebooks(): Promise<void> {
+    this._post({
+      command: "notebooks",
+      notebooks: await this._notebooks.list(),
+    });
+  }
+
+  /** Save the active notebook to Oceanum.io, then show it in the list. */
+  async saveActiveNotebook(): Promise<void> {
+    if (await this._notebooks.saveActive()) {
+      await this.refreshNotebooks();
+    }
+  }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -484,6 +514,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case "set-token":
         await vscode.commands.executeCommand(COMMANDS.SET_TOKEN);
+        break;
+
+      case "notebooks-refresh":
+        await this.refreshNotebooks();
+        break;
+
+      case "notebook-open":
+        await this._notebooks.open(msg.id);
+        break;
+
+      case "notebook-share":
+        await this._notebooks.share(msg.id, msg.name);
+        break;
+
+      case "notebook-save":
+        await this.saveActiveNotebook();
+        break;
+
+      case "sign-in":
+        await vscode.commands.executeCommand(COMMANDS.LOGIN);
+        break;
+
+      case "sign-out":
+        await vscode.commands.executeCommand(COMMANDS.SIGN_OUT);
         break;
 
       case "get-token-status": {

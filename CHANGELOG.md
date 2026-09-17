@@ -8,6 +8,28 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 
+- **Notebooks tab.** The sidebar now has the same three tabs as the Oceanum
+  panel in JupyterLab -- **Notebooks**, **Datamesh**, **Oceanum AI** -- and opens
+  on Notebooks. It lists the notebooks you have stored on Oceanum.io and those
+  shared with you, and from it you can:
+  - **Open** one. It is written to an `Oceanum/` folder in your workspace (or
+    the extension's own storage when no folder is open) and opened as a
+    notebook. If you already have a copy, you are asked whether to open yours or
+    replace it -- it may hold work you never saved back -- and a different
+    notebook that happens to share the name is never overwritten.
+  - **Save** the notebook in the active editor, from the tab or with
+    `Oceanum: Save Notebook to Oceanum.io`. A notebook opened from Oceanum.io
+    updates its record; a new one creates a record and is linked to it. If the
+    notebook is too large to store, its outputs are left out and you are told.
+  - **Share** one of yours with people by email (can view, or can edit), with
+    anyone who has the link, or stop it being public. Several addresses can be
+    given at once; if only some succeed, the ones that did not are named.
+
+  Notebooks need you to be signed in, not just a Datamesh token: a stored
+  notebook belongs to a person, and a token says what an account may access, not
+  who is using it. The Datamesh and Oceanum AI tabs work with a token as before.
+  "Workspace" and "AI Chat" are those two tabs under their old names.
+
 - **Sign in to Oceanum.io is back.** `Oceanum: Sign In` and `Oceanum: Sign Out`
   return, using the same device-authorization flow as before 0.4.0: a browser
   tab opens on Oceanum.io, you confirm the code shown in the notification, and
