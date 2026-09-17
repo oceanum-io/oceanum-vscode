@@ -4,80 +4,13 @@ import { SidebarProvider } from "./providers/SidebarProvider";
 import { DatameshPanel } from "./panels/DatameshPanel";
 import { COMMANDS } from "./commands";
 import { AUTH0_AUDIENCE, AUTH0_CLIENT_ID, AUTH0_DOMAIN } from "./constants";
+import { requestDeviceCode, pollForDeviceToken } from "./auth/device";
 import {
-  requestDeviceCode,
-  pollForDeviceToken,
-  refreshAccessToken,
-  type DeviceTokenResponse,
-} from "./auth/device";
+  clearTokens,
+  getValidAccessToken,
+  storeTokens,
+} from "./auth/session";
 import type { IWorkspaceSpec } from "./types";
-
-// Refresh slightly before the real expiry to avoid races against in-flight calls.
-const TOKEN_EXPIRY_BUFFER_MS = 60_000;
-
-async function storeTokens(
-  context: vscode.ExtensionContext,
-  token: DeviceTokenResponse,
-): Promise<void> {
-  await context.secrets.store("oceanum.accessToken", token.access_token);
-  if (token.refresh_token) {
-    await context.secrets.store("oceanum.refreshToken", token.refresh_token);
-  }
-  await context.secrets.store(
-    "oceanum.accessTokenExpiry",
-    String(Date.now() + token.expires_in * 1000),
-  );
-}
-
-async function clearTokens(context: vscode.ExtensionContext): Promise<void> {
-  await context.secrets.delete("oceanum.accessToken");
-  await context.secrets.delete("oceanum.refreshToken");
-  await context.secrets.delete("oceanum.accessTokenExpiry");
-}
-
-async function isAccessTokenExpired(
-  context: vscode.ExtensionContext,
-): Promise<boolean> {
-  const raw = await context.secrets.get("oceanum.accessTokenExpiry");
-  const expiry = Number(raw);
-  // No/!finite expiry → token predates expiry tracking; don't trust it.
-  if (!Number.isFinite(expiry)) return true;
-  return Date.now() >= expiry - TOKEN_EXPIRY_BUFFER_MS;
-}
-
-/**
- * Returns a usable access token, refreshing a stale one when possible.
- * Returns "" if there is no token, or it expired and could not be refreshed
- * (stale tokens are cleared so the caller can fall back to device login).
- */
-async function getValidAccessToken(
-  context: vscode.ExtensionContext,
-): Promise<string> {
-  const accessToken = (await context.secrets.get("oceanum.accessToken")) ?? "";
-  if (!accessToken) return "";
-  if (!(await isAccessTokenExpired(context))) return accessToken;
-
-  const refreshToken = await context.secrets.get("oceanum.refreshToken");
-  if (!refreshToken) {
-    await clearTokens(context);
-    return "";
-  }
-
-  try {
-    const refreshed = await refreshAccessToken({
-      domain: AUTH0_DOMAIN,
-      clientId: AUTH0_CLIENT_ID,
-      refreshToken,
-    });
-    await storeTokens(context, refreshed);
-    return refreshed.access_token;
-  } catch {
-    // A revoked or expired refresh token. The session is over: drop what is left of it so
-    // the caller falls back to signing in again.
-    await clearTokens(context);
-    return "";
-  }
-}
 
 export function activate(context: vscode.ExtensionContext): void {
   const sidebarProvider = new SidebarProvider(context);
@@ -161,6 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         await storeTokens(context, tokenResponse);
         DatameshPanel.instance?.updateAccessToken(tokenResponse.access_token);
+        void sidebarProvider.refreshNotebooks();
         vscode.window.showInformationMessage(
           "Oceanum: signed in successfully.",
         );
@@ -176,8 +110,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(COMMANDS.SIGN_OUT, async () => {
       await clearTokens(context);
       DatameshPanel.instance?.updateAccessToken("");
+      void sidebarProvider.refreshNotebooks();
       vscode.window.showInformationMessage("Oceanum: signed out.");
     }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(COMMANDS.SAVE_NOTEBOOK, () =>
+      sidebarProvider.saveActiveNotebook(),
+    ),
   );
 
   context.subscriptions.push(

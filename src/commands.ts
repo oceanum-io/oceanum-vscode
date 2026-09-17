@@ -5,4 +5,5 @@ export const COMMANDS = {
   SET_TOKEN: "oceanum.setToken",
   LOGIN: "oceanum.login",
   SIGN_OUT: "oceanum.signOut",
+  SAVE_NOTEBOOK: "oceanum.saveNotebook",
 } as const;

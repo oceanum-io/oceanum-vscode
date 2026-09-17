@@ -4,13 +4,20 @@ import { vscode } from "./vscode";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { TokenPrompt } from "./components/TokenPrompt";
-import type { ExtToWebviewMessage, IWorkspaceSpec } from "./types";
+import { NotebooksPanel } from "./components/NotebooksPanel";
+import type {
+  ExtToWebviewMessage,
+  IWorkspaceSpec,
+  NotebooksState,
+} from "./types";
 import "./styles/sidebar.css";
 
-type Tab = "workspace" | "chat";
+// The same three, in the same order, as the Oceanum panel in JupyterLab (oceanumlab).
+type Tab = "notebooks" | "workspace" | "chat";
 
 export function App(): React.ReactElement {
-  const [tab, setTab] = useState<Tab>("workspace");
+  const [tab, setTab] = useState<Tab>("notebooks");
+  const [notebooks, setNotebooks] = useState<NotebooksState | null>(null);
   const [hasToken, setHasToken] = useState(false);
   const [workspaceSpec, setWorkspaceSpec] = useState<IWorkspaceSpec | null>(
     null,
@@ -18,11 +25,13 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     vscode.postMessage({ command: "get-token-status" });
+    vscode.postMessage({ command: "notebooks-refresh" });
 
     const handler = (event: MessageEvent) => {
       const msg = event.data as ExtToWebviewMessage;
       if (msg.command === "token-status") setHasToken(msg.hasToken);
       if (msg.command === "workspace-update") setWorkspaceSpec(msg.spec);
+      if (msg.command === "notebooks") setNotebooks(msg.notebooks);
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
@@ -34,24 +43,35 @@ export function App(): React.ReactElement {
         <span className="oceanum-title">Oceanum.io</span>
         <div className="oceanum-tabs">
           <button
+            className={tab === "notebooks" ? "active" : ""}
+            onClick={() => setTab("notebooks")}
+          >
+            Notebooks
+          </button>
+          <button
             className={tab === "workspace" ? "active" : ""}
             onClick={() => setTab("workspace")}
           >
-            Workspace
+            Datamesh
           </button>
           <button
             className={tab === "chat" ? "active" : ""}
             onClick={() => setTab("chat")}
           >
-            AI Chat
+            Oceanum AI
           </button>
         </div>
       </header>
 
-      {!hasToken && <TokenPrompt />}
+      {/* The Datamesh token is what the Datamesh and AI tabs run on. Notebooks runs on
+          the sign-in instead, and says so itself, so the prompt stays off that tab. */}
+      {!hasToken && tab !== "notebooks" && <TokenPrompt />}
 
       {/* Both panes stay mounted; the inactive one is hidden via CSS so its
           local state (chat history, input, scroll) survives tab switches. */}
+      <div className="oceanum-tab-pane" hidden={tab !== "notebooks"}>
+        <NotebooksPanel notebooks={notebooks} />
+      </div>
       <div className="oceanum-tab-pane" hidden={tab !== "workspace"}>
         <WorkspacePanel spec={workspaceSpec} />
       </div>

@@ -430,7 +430,11 @@ function saveAs(
 
 type Posted = { command: string; [key: string]: unknown };
 
-function openPanel() {
+function openPanel(
+  // Every secret is "a-token" unless a test says otherwise: that is a configured Datamesh
+  // token, which is all the chat tests need.
+  secret: (key: string) => string | undefined = () => "a-token",
+) {
   const posted: Posted[] = [];
   let receive: (msg: unknown) => void = () => {};
   let visible = true;
@@ -465,7 +469,7 @@ function openPanel() {
   };
   const provider = new SidebarProvider({
     extensionUri: state.uri("file", "/extension"),
-    secrets: { get: async () => "a-token" },
+    secrets: { get: async (key: string) => secret(key) },
   } as never);
   provider.resolveWebviewView(view as never, {} as never, {} as never);
   return {
@@ -1535,5 +1539,46 @@ describe("progress while the agent works", () => {
       { phase: "interpreting" },
     ]);
     expect(posted.at(-1)).toEqual({ command: "chat-done" });
+  });
+});
+
+describe("the Notebooks tab", () => {
+  it("tells the webview there is nobody signed in, without asking Oceanum.io", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    // A Datamesh token, but no sign-in: the token says what an account may access, not
+    // who is using it, so it lists nothing.
+    const { posted, send } = openPanel((key) =>
+      key === "oceanum.datameshToken" ? "a-token" : undefined,
+    );
+
+    await send({ command: "notebooks-refresh" });
+    await vi.waitFor(() =>
+      expect(posted.map((m) => m.command)).toContain("notebooks"),
+    );
+
+    expect(posted.find((m) => m.command === "notebooks")).toEqual({
+      command: "notebooks",
+      notebooks: { state: "signed-out" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("routes the tab's sign-in and sign-out buttons to the commands", async () => {
+    const vscode = await import("vscode");
+    const executed = vi.mocked(vscode.commands.executeCommand);
+    executed.mockClear();
+    const { send } = openPanel(() => undefined);
+
+    await send({ command: "sign-in" });
+    await send({ command: "sign-out" });
+
+    await vi.waitFor(() =>
+      expect(executed.mock.calls.map(([command]) => command)).toEqual([
+        "oceanum.login",
+        "oceanum.signOut",
+      ]),
+    );
   });
 });

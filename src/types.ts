@@ -66,6 +66,25 @@ export interface ObservedRun {
   message: string;
 }
 
+/** A notebook stored on Oceanum.io, as the Notebooks tab lists it. */
+export interface StoredNotebook {
+  id: string;
+  name: string;
+  description: string | null;
+  modified: string;
+}
+
+/** What the Notebooks tab shows. */
+export type NotebooksState =
+  | { state: "signed-out" }
+  | {
+      state: "ready";
+      email: string;
+      mine: StoredNotebook[];
+      shared: StoredNotebook[];
+    }
+  | { state: "error"; email: string; message: string };
+
 // Messages sent from sidebar webview → extension host
 export type WebviewToExtMessage =
   | { command: "insert-datasource"; datasource: IDatasource }
@@ -77,12 +96,21 @@ export type WebviewToExtMessage =
   | { command: "chat-stop" }
   // Start a new conversation: end any run in flight WITHOUT reporting it, and
   // pin the notebook in the active tab (if any) as the conversation's context.
-  | { command: "chat-new" };
+  | { command: "chat-new" }
+  // The Notebooks tab: list what is stored, open or share one, save the active notebook,
+  // and sign in or out (which is what decides whether there is anything to list).
+  | { command: "notebooks-refresh" }
+  | { command: "notebook-open"; id: string }
+  | { command: "notebook-share"; id: string; name: string }
+  | { command: "notebook-save" }
+  | { command: "sign-in" }
+  | { command: "sign-out" };
 
 // Messages sent from extension host → sidebar webview
 export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
+  | { command: "notebooks"; notebooks: NotebooksState }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
   // The blocks of the latest response that did not reach the notebook. The

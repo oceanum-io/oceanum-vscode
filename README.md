@@ -67,6 +67,12 @@ Run **Oceanum: Sign In**. A browser tab opens on Oceanum.io; check that the code
 
 A Datamesh token is enough for the Datamesh UI and the AI panel. Signing in is what identifies *you*, which anything stored under your name on Oceanum needs.
 
+### Notebooks stored on Oceanum.io
+
+The **Notebooks** tab of the sidebar lists the notebooks you have saved to Oceanum.io and those shared with you -- the same ones you see at [notebook.oceanum.io](https://notebook.oceanum.io). Click one to open it; it is written to an `Oceanum/` folder in your workspace. **Save current notebook** stores the notebook in the active editor, and **Share** gives other people access by email or makes a link anyone can view.
+
+This needs you to be signed in (see above). A Datamesh token is not enough for it: a stored notebook belongs to a person.
+
 ## Commands
 
 | Command | Description |
@@ -75,6 +81,7 @@ A Datamesh token is enough for the Datamesh UI and the AI panel. Signing in is w
 | `Oceanum: Configure Token` | Set your Datamesh token securely |
 | `Oceanum: Sign In` | Sign in to Oceanum.io in your browser |
 | `Oceanum: Sign Out` | Sign out and delete the stored tokens |
+| `Oceanum: Save Notebook to Oceanum.io` | Store the active notebook on Oceanum.io |
 
 ---
 

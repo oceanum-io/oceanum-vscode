@@ -60,6 +60,10 @@
       {
         "command": "oceanum.signOut",
         "title": "Oceanum: Sign Out"
+      },
+      {
+        "command": "oceanum.saveNotebook",
+        "title": "Oceanum: Save Notebook to Oceanum.io"
       }
     ],
     "viewsContainers": {

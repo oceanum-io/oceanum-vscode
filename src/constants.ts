@@ -16,6 +16,12 @@ export const DATAMESH_UI_URL = "https://ui.datamesh.oceanum.io";
 export const AUTH0_DOMAIN = "auth.oceanum.io";
 export const AUTH0_CLIENT_ID = "ah2hkmuxnFaKwoKoTyLxJPA9z91WBjlt";
 
+// Where notebooks are stored, and where one opens for someone without this extension.
+// Deployment identity, like the Auth0 values above, and for the same reason not settings:
+// a user-editable store address is somewhere to send the user's access token.
+export const SPECS_URL = "https://specs.oceanum.io";
+export const NOTEBOOK_SITE_URL = "https://notebook.oceanum.io";
+
 // The API identifier the access token is minted for. Empty means the login
 // asks for no audience and Auth0 issues its tenant default, which is what has
 // always happened here -- the setting existed but had no value behind it.
