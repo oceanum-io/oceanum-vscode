@@ -6,6 +6,31 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+
+- **Sign in to Oceanum.io is back.** `Oceanum: Sign In` and `Oceanum: Sign Out`
+  return, using the same device-authorization flow as before 0.4.0: a browser
+  tab opens on Oceanum.io, you confirm the code shown in the notification, and
+  the extension receives the tokens. Tokens live in VS Code's encrypted secret
+  storage and are refreshed automatically.
+
+  0.4.0 removed sign-in because it was a second credential for the same access
+  -- everything the extension did then worked with the Datamesh token alone.
+  That stops being true once it works with notebooks stored on Oceanum, which
+  belong to a person: a Datamesh token identifies an account's access, not who
+  is using it, so owning and sharing a notebook needs a signed-in identity.
+
+  The Datamesh token still works for everything it worked for. Opening the
+  Datamesh UI only asks you to sign in when you have **neither** credential;
+  before 0.4.0 it asked whenever you were not signed in, even with a working
+  token configured.
+
+### Removed
+
+- The clean-up that deleted stored access and refresh tokens on every
+  activation, added in 0.4.0 when nothing used them. It would now sign you out
+  each time VS Code started.
+
 ## [0.5.0]
 
 ### Added
