@@ -1585,6 +1585,38 @@ describe("the Notebooks tab", () => {
     await vi.waitFor(() => expect(status()?.isNotebook).toBe(true));
   });
 
+  it("lists again after every action, so nothing on show goes stale", async () => {
+    // Signed out, so each action stops early and the listing is all that is posted:
+    // this is about the refresh happening at all, not about what the action did.
+    const fetchSpy = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({}),
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { posted, send } = openPanel(() => undefined);
+    const ID = "6f1c1a52-4b8e-4c0f-9a57-1d2e3f4a5b6c";
+    const actions = [
+      { command: "notebook-open", id: ID },
+      { command: "notebook-share", id: ID, name: "Waves" },
+      { command: "notebook-rename", id: ID, name: "Waves" },
+      { command: "notebook-delete", id: ID, name: "Waves" },
+      { command: "notebook-save" },
+    ];
+
+    for (const action of actions) {
+      const before = posted.filter((m) => m.command === "notebooks").length;
+      await send(action);
+      await vi.waitFor(() =>
+        expect(
+          posted.filter((m) => m.command === "notebooks").length,
+        ).toBeGreaterThan(before),
+      );
+    }
+
+    vi.unstubAllGlobals();
+  });
+
   it("routes the tab's sign-in and sign-out buttons to the commands", async () => {
     const vscode = await import("vscode");
     const executed = vi.mocked(vscode.commands.executeCommand);

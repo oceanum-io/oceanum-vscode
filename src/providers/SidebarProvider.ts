@@ -70,6 +70,21 @@ function kindsOf(notebook: vscode.NotebookDocument): string {
     .join(",");
 }
 
+/**
+ * Messages from the Notebooks tab that leave its listing worth fetching again.
+ *
+ * Opening and sharing do not change a record of the user's own, but either can be the
+ * moment a row someone else has renamed or deleted is found to be stale, and both are
+ * cheap to follow with one listing.
+ */
+const CHANGES_NOTEBOOKS: ReadonlySet<WebviewToExtMessage["command"]> = new Set([
+  "notebook-open",
+  "notebook-share",
+  "notebook-rename",
+  "notebook-delete",
+  "notebook-save",
+]);
+
 // Longest time from a file notebook opening to an untitled notebook closing
 // for the file to be taken as its saved copy: time enough to fill and save
 // it, formatters included.
@@ -266,16 +281,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * tab's context menu named; without one it is the active notebook.
    */
   async saveActiveNotebook(target?: string): Promise<void> {
-    if (await this._notebooks.saveActive(target)) {
+    try {
+      await this._notebooks.saveActive(target);
+    } finally {
+      // Either way: a save that went nowhere still says whether the rows on show are
+      // the ones that are there.
       await this.refreshNotebooks();
     }
   }
 
   /** Share a notebook, the one a tab's menu named or the active one. */
   async shareNotebook(target?: string): Promise<void> {
-    await this._notebooks.shareNotebook(target);
-    // Sharing can save the notebook first, which puts a new record in the list.
-    await this.refreshNotebooks();
+    try {
+      // Sharing can save the notebook first, which puts a new record in the list.
+      await this._notebooks.shareNotebook(target);
+    } finally {
+      await this.refreshNotebooks();
+    }
   }
 
   /**
@@ -531,6 +553,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _handleMessage(msg: WebviewToExtMessage): Promise<void> {
+    try {
+      await this._dispatch(msg);
+    } finally {
+      // Every action from the tab is followed by a fresh listing, whether or not it did
+      // anything: one request, and the tab never leaves a name, a row or an absence on
+      // show that the action, or somebody else, has already made wrong. Signing in and
+      // out are not here because their commands refresh on their own.
+      if (CHANGES_NOTEBOOKS.has(msg.command)) {
+        await this.refreshNotebooks();
+      }
+    }
+  }
+
+  private async _dispatch(msg: WebviewToExtMessage): Promise<void> {
     switch (msg.command) {
       case "open-datamesh":
         await vscode.commands.executeCommand(COMMANDS.OPEN_DATAMESH);
@@ -552,16 +588,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         await this._notebooks.share(msg.id, msg.name);
         break;
 
-      // Both change the list: refresh it whether or not the user went through with it,
-      // which costs one request and never leaves a stale name or a deleted row on show.
       case "notebook-rename":
         await this._notebooks.rename(msg.id, msg.name);
-        await this.refreshNotebooks();
         break;
 
       case "notebook-delete":
         await this._notebooks.remove(msg.id, msg.name);
-        await this.refreshNotebooks();
         break;
 
       case "notebook-save":
