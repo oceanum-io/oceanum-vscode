@@ -106,11 +106,13 @@ a:hover {
   padding: 4px 0;
 }
 
+/* Headers within a tab are bold and in standard case, as they are in oceanumlab's
+ * Oceanum.io panel. The sidebar's own title above the tabs stays upper case, which is
+ * what VS Code does with every other view title. */
 .workspace-name {
   padding: 6px 12px;
-  font-size: 11px;
+  font-size: var(--vscode-font-size);
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
   border-bottom: 1px solid var(--vscode-panel-border);
