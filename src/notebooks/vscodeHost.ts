@@ -21,6 +21,19 @@ function fileAt(uri: vscode.Uri): INotebookFile {
   };
 }
 
+/** A notebook document as a file, saved first; null for none, or an unsaved new one. */
+async function notebookFile(
+  doc: vscode.NotebookDocument | undefined,
+): Promise<INotebookFile | null> {
+  if (!doc || doc.isUntitled) {
+    return null;
+  }
+  if (doc.isDirty && !(await doc.save())) {
+    return null;
+  }
+  return fileAt(doc.uri);
+}
+
 export function vscodeHost(context: vscode.ExtensionContext): INotebookHost {
   return {
     accessToken: async () => (await getValidAccessToken(context)) || null,
@@ -58,14 +71,20 @@ export function vscodeHost(context: vscode.ExtensionContext): INotebookHost {
     },
 
     async activeNotebook(): Promise<INotebookFile | null> {
-      const doc = vscode.window.activeNotebookEditor?.notebook;
-      if (!doc || doc.isUntitled) {
-        return null;
+      return notebookFile(vscode.window.activeNotebookEditor?.notebook);
+    },
+
+    async notebookAt(target: string): Promise<INotebookFile | null> {
+      const uri = vscode.Uri.parse(target);
+      const open = vscode.workspace.notebookDocuments.find(
+        (doc) => doc.uri.toString() === uri.toString(),
+      );
+      if (open) {
+        return notebookFile(open);
       }
-      if (doc.isDirty && !(await doc.save())) {
-        return null;
-      }
-      return fileAt(doc.uri);
+      // Not open as a notebook: it is still a file, and reading it is how everything
+      // else here decides whether it is one.
+      return /\.ipynb$/i.test(uri.path) ? fileAt(uri) : null;
     },
 
     pick: async (items, placeholder) =>

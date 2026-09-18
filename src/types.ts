@@ -105,6 +105,8 @@ export type WebviewToExtMessage =
   | { command: "notebook-rename"; id: string; name: string }
   | { command: "notebook-delete"; id: string; name: string }
   | { command: "notebook-save" }
+  // Whether the active tab is a notebook, which is what "Save current notebook" acts on.
+  | { command: "get-active-notebook" }
   | { command: "sign-in" }
   | { command: "sign-out" };
 
@@ -112,6 +114,7 @@ export type WebviewToExtMessage =
 export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
+  | { command: "active-notebook"; isNotebook: boolean }
   | { command: "notebooks"; notebooks: NotebooksState }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }

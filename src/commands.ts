@@ -6,4 +6,5 @@ export const COMMANDS = {
   LOGIN: "oceanum.login",
   SIGN_OUT: "oceanum.signOut",
   SAVE_NOTEBOOK: "oceanum.saveNotebook",
+  SHARE_NOTEBOOK: "oceanum.shareNotebook",
 } as const;

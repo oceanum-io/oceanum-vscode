@@ -86,9 +86,12 @@ function Section({
 
 export function NotebooksPanel({
   notebooks,
+  activeIsNotebook,
 }: {
   /** Null until the extension has answered the first time. */
   notebooks: NotebooksState | null;
+  /** Whether the tab on top is a notebook: what Save would act on. */
+  activeIsNotebook: boolean;
 }): React.ReactElement {
   if (notebooks === null) {
     return <div className="oceanum-empty">Loading…</div>;
@@ -117,7 +120,12 @@ export function NotebooksPanel({
       <div className="notebooks-toolbar">
         <button
           className="notebooks-action"
-          title="Save the notebook in the active editor to Oceanum.io"
+          disabled={!activeIsNotebook}
+          title={
+            activeIsNotebook
+              ? "Save the notebook in the active editor to Oceanum.io"
+              : "Open a notebook to save it to Oceanum.io"
+          }
           onClick={() => vscode.postMessage({ command: "notebook-save" })}
         >
           Save current notebook

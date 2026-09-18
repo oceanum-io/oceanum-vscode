@@ -19,6 +19,9 @@ export function App(): React.ReactElement {
   const [tab, setTab] = useState<Tab>("notebooks");
   const [notebooks, setNotebooks] = useState<NotebooksState | null>(null);
   const [hasToken, setHasToken] = useState(false);
+  // Whether the tab on top is a notebook, so the sidebar can say when there is nothing
+  // for "Save current notebook" to act on.
+  const [activeIsNotebook, setActiveIsNotebook] = useState(false);
   const [workspaceSpec, setWorkspaceSpec] = useState<IWorkspaceSpec | null>(
     null,
   );
@@ -26,12 +29,14 @@ export function App(): React.ReactElement {
   useEffect(() => {
     vscode.postMessage({ command: "get-token-status" });
     vscode.postMessage({ command: "notebooks-refresh" });
+    vscode.postMessage({ command: "get-active-notebook" });
 
     const handler = (event: MessageEvent) => {
       const msg = event.data as ExtToWebviewMessage;
       if (msg.command === "token-status") setHasToken(msg.hasToken);
       if (msg.command === "workspace-update") setWorkspaceSpec(msg.spec);
       if (msg.command === "notebooks") setNotebooks(msg.notebooks);
+      if (msg.command === "active-notebook") setActiveIsNotebook(msg.isNotebook);
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
@@ -79,7 +84,10 @@ export function App(): React.ReactElement {
       {/* Both panes stay mounted; the inactive one is hidden via CSS so its
           local state (chat history, input, scroll) survives tab switches. */}
       <div className="oceanum-tab-pane" hidden={tab !== "notebooks"}>
-        <NotebooksPanel notebooks={notebooks} />
+        <NotebooksPanel
+          notebooks={notebooks}
+          activeIsNotebook={activeIsNotebook}
+        />
       </div>
       <div className="oceanum-tab-pane" hidden={tab !== "workspace"}>
         <WorkspacePanel spec={workspaceSpec} />

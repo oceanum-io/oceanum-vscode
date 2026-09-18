@@ -58,6 +58,12 @@ export interface INotebookHost {
   folder(): Promise<INotebookFolder>;
   /** The notebook in the active editor, saved to disk first, or null if there is none. */
   activeNotebook(): Promise<INotebookFile | null>;
+  /**
+   * The notebook at `target` (a URI as a string), saved to disk first, or null if it is
+   * not one. Right-clicking a tab in VS Code does not make it the active editor, so a
+   * command invoked from a tab's menu says which notebook it meant.
+   */
+  notebookAt(target: string): Promise<INotebookFile | null>;
   pick(items: string[], placeholder: string): Promise<string | undefined>;
   input(prompt: string, placeholder: string): Promise<string | undefined>;
   /** Resolves to the action chosen, if any. */
@@ -80,6 +86,7 @@ const SIGN_IN = "Sign In";
 const OPEN_LOCAL = "Open my copy";
 const REPLACE = "Replace with the stored version";
 const SAVE_AS_NEW = "Save as a new notebook";
+const SAVE_FIRST = "Save to Oceanum.io";
 const COPY_LINK = "Copy link";
 
 const DELETE = "Delete";
@@ -163,10 +170,11 @@ export class StoredNotebooks {
   }
 
   /**
-   * Save the active notebook to Oceanum.io. Returns whether anything was stored, so the
-   * caller knows whether the list changed.
+   * Save a notebook to Oceanum.io: the one at `target` when a tab's menu named it,
+   * otherwise the active one. Returns whether anything was stored, so the caller knows
+   * whether the list changed.
    */
-  async saveActive(): Promise<boolean> {
+  async saveActive(target?: string): Promise<boolean> {
     // A stored notebook belongs to a person, so there has to be one. A Datamesh token is
     // not enough: it identifies an account's access, not who is using it.
     if (!(await this._host.email())) {
@@ -180,7 +188,7 @@ export class StoredNotebooks {
       return false;
     }
 
-    const file = await this._host.activeNotebook();
+    const file = await this._notebookFile(target);
     if (!file) {
       await this._host.warn(
         "Open a notebook that is saved to disk, then save it to Oceanum.io.",
@@ -242,7 +250,69 @@ export class StoredNotebooks {
     return true;
   }
 
-  /** Share a stored notebook with people, or with anyone who has the link. */
+  /**
+   * Share the notebook at `target`, or the active one, with people or by link.
+   *
+   * A notebook that has never been saved to Oceanum.io has no record to share, so this
+   * offers to save it first and shares what that produced. Saying no leaves it alone.
+   */
+  async shareNotebook(target?: string): Promise<void> {
+    const file = await this._notebookFile(target);
+    if (!file) {
+      await this._host.warn(
+        "Open a notebook that is saved to disk, then share it on Oceanum.io.",
+      );
+      return;
+    }
+
+    let id = await this._linkedId(file);
+    if (!id) {
+      const choice = await this._host.info(
+        "This notebook is not on Oceanum.io yet. Save it there before sharing it?",
+        SAVE_FIRST,
+      );
+      if (choice !== SAVE_FIRST || !(await this.saveActive(target))) {
+        return;
+      }
+      id = await this._linkedId(file);
+      if (!id) {
+        return;
+      }
+    }
+
+    // The record's own name, which a rename may have moved away from the file's.
+    let name: string;
+    try {
+      name = (await this._client.get(id)).name;
+    } catch (err) {
+      await this._report(err, "Could not share the notebook");
+      return;
+    }
+    await this.share(id, name);
+  }
+
+  /** The record a notebook file is linked to, or null: an unreadable file has none. */
+  private async _linkedId(file: INotebookFile): Promise<string | null> {
+    try {
+      const content = JSON.parse(await file.read()) as INotebookContent;
+      return (
+        readLink(content.metadata?.[METADATA_KEY], this._specsUrl)?.spec_id ??
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /** The notebook a command acts on: the one it named, or the active one. */
+  private async _notebookFile(
+    target: string | undefined,
+  ): Promise<INotebookFile | null> {
+    return target === undefined
+      ? this._host.activeNotebook()
+      : this._host.notebookAt(target);
+  }
+
   /**
    * Give a stored notebook a new name.
    *
@@ -293,6 +363,7 @@ export class StoredNotebooks {
     );
   }
 
+  /** Share a stored notebook with people, or with anyone who has the link. */
   async share(id: string, name: string): Promise<void> {
     const how = await this._host.pick(
       [SHARE_PEOPLE, SHARE_PUBLIC, STOP_PUBLIC],

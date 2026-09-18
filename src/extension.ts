@@ -115,9 +115,32 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Both take the notebook a tab's context menu named, which VS Code passes as a Uri.
+  // From the command palette there is no argument and they act on the active notebook.
   context.subscriptions.push(
-    vscode.commands.registerCommand(COMMANDS.SAVE_NOTEBOOK, () =>
-      sidebarProvider.saveActiveNotebook(),
+    vscode.commands.registerCommand(
+      COMMANDS.SAVE_NOTEBOOK,
+      (target?: vscode.Uri) =>
+        sidebarProvider.saveActiveNotebook(target?.toString()),
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      COMMANDS.SHARE_NOTEBOOK,
+      (target?: vscode.Uri) =>
+        sidebarProvider.shareNotebook(target?.toString()),
+    ),
+  );
+
+  // "Save current notebook" in the sidebar acts on the active tab, so it is disabled
+  // whenever that is not a notebook. Either event can be what changed which tab is on top.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveNotebookEditor(() =>
+      sidebarProvider.sendActiveNotebookStatus(),
+    ),
+    vscode.window.onDidChangeActiveTextEditor(() =>
+      sidebarProvider.sendActiveNotebookStatus(),
     ),
   );
 

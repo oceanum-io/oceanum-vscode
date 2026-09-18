@@ -261,11 +261,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  /** Save the active notebook to Oceanum.io, then show it in the list. */
-  async saveActiveNotebook(): Promise<void> {
-    if (await this._notebooks.saveActive()) {
+  /**
+   * Save a notebook to Oceanum.io, then show it in the list. `target` is the notebook a
+   * tab's context menu named; without one it is the active notebook.
+   */
+  async saveActiveNotebook(target?: string): Promise<void> {
+    if (await this._notebooks.saveActive(target)) {
       await this.refreshNotebooks();
     }
+  }
+
+  /** Share a notebook, the one a tab's menu named or the active one. */
+  async shareNotebook(target?: string): Promise<void> {
+    await this._notebooks.shareNotebook(target);
+    // Sharing can save the notebook first, which puts a new record in the list.
+    await this.refreshNotebooks();
+  }
+
+  /**
+   * Tell the sidebar whether the active tab is a notebook, which is what "Save current
+   * notebook" would act on. Called whenever the active editor changes.
+   */
+  sendActiveNotebookStatus(): void {
+    this._post({
+      command: "active-notebook",
+      isNotebook: vscode.window.activeNotebookEditor !== undefined,
+    });
   }
 
   resolveWebviewView(
@@ -550,6 +571,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case "sign-out":
         await vscode.commands.executeCommand(COMMANDS.SIGN_OUT);
+        break;
+
+      case "get-active-notebook":
+        this.sendActiveNotebookStatus();
         break;
 
       case "get-token-status": {

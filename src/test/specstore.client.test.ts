@@ -160,8 +160,11 @@ describe('SpecStoreClient', () => {
       GET: () => json({ ...record(), description: 'Wave stats' }),
       PUT: () => json(record())
     };
-    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
-      responses[init?.method ?? 'GET']()
+    const fetch = vi.fn(
+      async (
+        _input: Parameters<typeof globalThis.fetch>[0],
+        init?: RequestInit
+      ) => responses[init?.method ?? 'GET']()
     );
     const client = new SpecStoreClient({
       specsUrl: 'https://specs.example.com',

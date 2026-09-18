@@ -75,6 +75,7 @@ export type ExtToWebviewMessage =
   | { command: "workspace-update"; spec: IWorkspaceSpec }
   | { command: "token-status"; hasToken: boolean }
   | { command: "notebooks"; notebooks: NotebooksState }
+  | { command: "active-notebook"; isNotebook: boolean }
   | { command: "notebook-context"; cells: string[] }
   | { command: "chat-response"; response: OceanumResponse }
   // The blocks of the latest response that did not reach the notebook. The

@@ -74,6 +74,9 @@ function fakeHost(options: {
       },
     }),
     activeNotebook: async () => (options.active ? file(options.active) : null),
+    // A tab's context menu names the notebook it meant; here that is a file name.
+    notebookAt: async (target: string) =>
+      files.has(target) ? file(target) : null,
     pick: async () => answers.shift(),
     input: async () => options.typed,
     info: async (message) => {
@@ -121,6 +124,60 @@ function make(host: INotebookHost, fetchFake: typeof fetch): StoredNotebooks {
     fetch: fetchFake,
   });
 }
+
+describe("acting on the notebook a tab named", () => {
+  it("saves the named notebook, not whichever one is active", async () => {
+    // Right-clicking a tab does not make it the active editor, so a command from that
+    // menu has to act on what it names or it saves the wrong notebook.
+    const { host } = fakeHost({
+      active: "Active.ipynb",
+      files: { "Active.ipynb": notebook(), "Named.ipynb": linked(ID) },
+    });
+    const { fetchFake, requests } = specStore([
+      200,
+      { ...summary(ID, "Named", "ada@example.org"), spec: {} },
+    ]);
+
+    expect(await make(host, fetchFake).saveActive("Named.ipynb")).toBe(true);
+
+    expect(requests).toHaveLength(1);
+    // The linked record of the named file, not a new record for the active one.
+    expect(requests[0].method).toBe("PUT");
+    expect(requests[0].url).toBe(`${SPECS}/specs/notebook/${ID}`);
+  });
+
+  it("shares the named notebook through its linked record", async () => {
+    const { host } = fakeHost({
+      active: "Active.ipynb",
+      files: { "Active.ipynb": notebook(), "Named.ipynb": linked(ID) },
+      answers: ["Anyone with the link can view"],
+    });
+    const { fetchFake, requests } = specStore(
+      [200, { ...summary(ID, "Waves", "ada@example.org"), spec: {} }],
+      [200, {}],
+    );
+
+    await make(host, fetchFake).shareNotebook("Named.ipynb");
+
+    // Reads the record for its name, then grants on that same id.
+    expect(requests.map((r) => r.method)).toEqual(["GET", "POST"]);
+    expect(requests[1].url).toBe(`${SPECS}/specs/notebook/${ID}/permissions`);
+  });
+
+  it("offers to save a notebook that is not on Oceanum.io before sharing it", async () => {
+    const declined = fakeHost({
+      files: { "New.ipynb": notebook() },
+      answers: [],
+    });
+    const first = specStore();
+
+    await make(declined.host, first.fetchFake).shareNotebook("New.ipynb");
+
+    // Nothing stored and nothing shared: saying no leaves the notebook alone.
+    expect(first.requests).toEqual([]);
+    expect(declined.log.info[0]).toContain("not on Oceanum.io yet");
+  });
+});
 
 describe("rename", () => {
   it("sends the new name and nothing else", async () => {

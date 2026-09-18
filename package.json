@@ -64,6 +64,10 @@
       {
         "command": "oceanum.saveNotebook",
         "title": "Oceanum: Save Notebook to Oceanum.io"
+      },
+      {
+        "command": "oceanum.shareNotebook",
+        "title": "Oceanum: Share Notebook on Oceanum.io"
       }
     ],
     "viewsContainers": {
@@ -90,6 +94,18 @@
           "command": "oceanum.openDatamesh",
           "when": "view == oceanum.sidebar",
           "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "oceanum.saveNotebook",
+          "when": "resourceExtname == .ipynb",
+          "group": "oceanum@1"
+        },
+        {
+          "command": "oceanum.shareNotebook",
+          "when": "resourceExtname == .ipynb",
+          "group": "oceanum@2"
         }
       ]
     }
