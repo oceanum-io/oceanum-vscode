@@ -281,6 +281,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /**
    * Tell the sidebar whether the active tab is a notebook, which is what "Save current
    * notebook" would act on. Called whenever the active editor changes.
+   *
+   * An untitled notebook counts: saving one asks where to put it first, and then stores
+   * it like any other.
    */
   sendActiveNotebookStatus(): void {
     this._post({

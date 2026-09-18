@@ -42,10 +42,11 @@ export function App(): React.ReactElement {
     return () => window.removeEventListener("message", handler);
   }, []);
 
-  // The tab waits for a sign-in, as it does in oceanumlab. It also waits for the
+  // A stored notebook belongs to someone, so saving one needs a sign-in.
+  const signedIn = notebooks !== null && notebooks.state !== "signed-out";
+  // The AI tab waits for a sign-in, as it does in oceanumlab. It also waits for the
   // Datamesh token, which is the only credential the chat here can send: without one the
   // tab would be there to be clicked and nothing behind it would work.
-  const signedIn = notebooks !== null && notebooks.state !== "signed-out";
   const showChat = signedIn && hasToken;
 
   return (
@@ -86,7 +87,7 @@ export function App(): React.ReactElement {
       <div className="oceanum-tab-pane" hidden={tab !== "notebooks"}>
         <NotebooksPanel
           notebooks={notebooks}
-          activeIsNotebook={activeIsNotebook}
+          canSave={signedIn && activeIsNotebook}
         />
       </div>
       <div className="oceanum-tab-pane" hidden={tab !== "workspace"}>

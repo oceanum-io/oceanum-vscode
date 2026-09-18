@@ -21,12 +21,28 @@ function fileAt(uri: vscode.Uri): INotebookFile {
   };
 }
 
-/** A notebook document as a file, saved first; null for none, or an unsaved new one. */
+/**
+ * A notebook document as a file on disk, saved first, or null if it did not get there.
+ *
+ * A record is linked to its notebook by metadata inside the file, which is how saving it
+ * again, renaming it or sharing it later find the record. An untitled notebook has no
+ * file to carry that, so saving one asks where to put it first: `save()` on an untitled
+ * document is VS Code's Save As. That replaces the untitled tab with the saved file,
+ * which becomes the active notebook, so that is what comes back. Declining the dialog
+ * leaves everything alone and answers null.
+ */
 async function notebookFile(
   doc: vscode.NotebookDocument | undefined,
 ): Promise<INotebookFile | null> {
-  if (!doc || doc.isUntitled) {
+  if (!doc) {
     return null;
+  }
+  if (doc.isUntitled) {
+    if (!(await doc.save())) {
+      return null;
+    }
+    const saved = vscode.window.activeNotebookEditor?.notebook;
+    return saved && !saved.isUntitled ? fileAt(saved.uri) : null;
   }
   if (doc.isDirty && !(await doc.save())) {
     return null;

@@ -1565,6 +1565,26 @@ describe("the Notebooks tab", () => {
     vi.unstubAllGlobals();
   });
 
+  it("says whether the tab on top is a notebook, which is what Save acts on", async () => {
+    const { posted, send } = openPanel(() => undefined);
+    const status = () =>
+      posted.filter((m) => m.command === "active-notebook").at(-1);
+
+    // Nothing open: there is nothing for the button to save.
+    await send({ command: "get-active-notebook" });
+    await vi.waitFor(() => expect(status()).toBeDefined());
+    expect(status()).toEqual({ command: "active-notebook", isNotebook: false });
+
+    activate(notebook("Waves.ipynb"));
+    await send({ command: "get-active-notebook" });
+    await vi.waitFor(() => expect(status()?.isNotebook).toBe(true));
+
+    // An untitled notebook counts too: saving one asks where to put it first.
+    activate(notebook("Untitled-1.ipynb", [], "untitled"));
+    await send({ command: "get-active-notebook" });
+    await vi.waitFor(() => expect(status()?.isNotebook).toBe(true));
+  });
+
   it("routes the tab's sign-in and sign-out buttons to the commands", async () => {
     const vscode = await import("vscode");
     const executed = vi.mocked(vscode.commands.executeCommand);
