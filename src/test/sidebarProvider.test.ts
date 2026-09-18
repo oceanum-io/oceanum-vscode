@@ -132,6 +132,12 @@ vi.mock("vscode", () => {
       ),
       showInformationMessage: vi.fn(),
       showWarningMessage: vi.fn(),
+      // Answering undefined is the user dismissing the prompt, so an action that asks
+      // something stops there. Without these at all, asking throws, and the throw
+      // arrives as an unhandled rejection: vitest then fails the run while reporting
+      // every test as passed.
+      showQuickPick: vi.fn(async () => undefined),
+      showInputBox: vi.fn(async () => undefined),
     },
     workspace: {
       getConfiguration: () => ({
