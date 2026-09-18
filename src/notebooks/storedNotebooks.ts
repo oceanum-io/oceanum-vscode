@@ -82,6 +82,8 @@ const REPLACE = "Replace with the stored version";
 const SAVE_AS_NEW = "Save as a new notebook";
 const COPY_LINK = "Copy link";
 
+const DELETE = "Delete";
+
 const SHARE_PEOPLE = "Share with people…";
 const SHARE_PUBLIC = "Anyone with the link can view";
 const STOP_PUBLIC = "Stop public access";
@@ -241,6 +243,56 @@ export class StoredNotebooks {
   }
 
   /** Share a stored notebook with people, or with anyone who has the link. */
+  /**
+   * Give a stored notebook a new name.
+   *
+   * Only the name is sent, so this cannot overwrite a change someone else made to the
+   * notebook while the prompt was open. A local copy is left alone: its file name is the
+   * user's, and the record is linked by id rather than by what either is called.
+   */
+  async rename(id: string, name: string): Promise<void> {
+    const typed = await this._host.input(`Rename "${name}"`, name);
+    if (typed === undefined) {
+      return;
+    }
+    const wanted = typed.trim();
+    if (wanted === "" || wanted === name) {
+      return;
+    }
+    try {
+      await this._client.rename(id, wanted);
+    } catch (err) {
+      await this._report(err, "Could not rename the notebook");
+      return;
+    }
+    await this._host.info(`Renamed to "${wanted}".`);
+  }
+
+  /**
+   * Delete a stored notebook, once the user has said so in as many words.
+   *
+   * Everyone it is shared with loses it, and nothing here can undo that, so the prompt
+   * says as much. Any local copy stays: it is a file in the user's workspace.
+   */
+  async remove(id: string, name: string): Promise<void> {
+    const choice = await this._host.warn(
+      `Delete "${name}" from Oceanum.io? Everyone it is shared with loses it, and this cannot be undone.`,
+      DELETE,
+    );
+    if (choice !== DELETE) {
+      return;
+    }
+    try {
+      await this._client.remove(id);
+    } catch (err) {
+      await this._report(err, "Could not delete the notebook");
+      return;
+    }
+    await this._host.info(
+      `Deleted "${name}" from Oceanum.io. Any copy in your workspace was kept.`,
+    );
+  }
+
   async share(id: string, name: string): Promise<void> {
     const how = await this._host.pick(
       [SHARE_PEOPLE, SHARE_PUBLIC, STOP_PUBLIC],

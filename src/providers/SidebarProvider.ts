@@ -528,6 +528,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         await this._notebooks.share(msg.id, msg.name);
         break;
 
+      // Both change the list: refresh it whether or not the user went through with it,
+      // which costs one request and never leaves a stale name or a deleted row on show.
+      case "notebook-rename":
+        await this._notebooks.rename(msg.id, msg.name);
+        await this.refreshNotebooks();
+        break;
+
+      case "notebook-delete":
+        await this._notebooks.remove(msg.id, msg.name);
+        await this.refreshNotebooks();
+        break;
+
       case "notebook-save":
         await this.saveActiveNotebook();
         break;

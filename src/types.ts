@@ -97,11 +97,13 @@ export type WebviewToExtMessage =
   // Start a new conversation: end any run in flight WITHOUT reporting it, and
   // pin the notebook in the active tab (if any) as the conversation's context.
   | { command: "chat-new" }
-  // The Notebooks tab: list what is stored, open or share one, save the active notebook,
-  // and sign in or out (which is what decides whether there is anything to list).
+  // The Notebooks tab: list what is stored, open, share, rename or delete one, save the
+  // active notebook, and sign in or out (which decides whether there is anything to list).
   | { command: "notebooks-refresh" }
   | { command: "notebook-open"; id: string }
   | { command: "notebook-share"; id: string; name: string }
+  | { command: "notebook-rename"; id: string; name: string }
+  | { command: "notebook-delete"; id: string; name: string }
   | { command: "notebook-save" }
   | { command: "sign-in" }
   | { command: "sign-out" };

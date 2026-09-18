@@ -122,6 +122,73 @@ function make(host: INotebookHost, fetchFake: typeof fetch): StoredNotebooks {
   });
 }
 
+describe("rename", () => {
+  it("sends the new name and nothing else", async () => {
+    const { host, log } = fakeHost({ typed: "Renamed" });
+    const { fetchFake, requests } = specStore([
+      200,
+      { ...summary(ID, "Renamed", "ada@example.org"), spec: {} },
+    ]);
+
+    await make(host, fetchFake).rename(ID, "Waves");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("PATCH");
+    expect(requests[0].url).toBe(`${SPECS}/specs/notebook/${ID}`);
+    // Only the name: the notebook is never sent back, so a change someone else made
+    // to it cannot be overwritten by a rename.
+    expect(requests[0].body).toEqual({ name: "Renamed" });
+    expect(log.info).toEqual(['Renamed to "Renamed".']);
+  });
+
+  it("does nothing when the prompt is dismissed or the name is unchanged", async () => {
+    const dismissed = fakeHost({ typed: undefined });
+    const first = specStore();
+    await make(dismissed.host, first.fetchFake).rename(ID, "Waves");
+    expect(first.requests).toEqual([]);
+
+    const same = fakeHost({ typed: "  Waves  " });
+    const second = specStore();
+    await make(same.host, second.fetchFake).rename(ID, "Waves");
+    expect(second.requests).toEqual([]);
+  });
+
+  it("reports a failure rather than claiming it renamed anything", async () => {
+    const { host, log } = fakeHost({ typed: "Renamed" });
+    const { fetchFake } = specStore([403, {}]);
+
+    await make(host, fetchFake).rename(ID, "Waves");
+
+    expect(log.info).toEqual([]);
+    expect(log.warn[0]).toContain("Could not rename the notebook");
+  });
+});
+
+describe("remove", () => {
+  it("deletes only after the user says so", async () => {
+    const { host, log } = fakeHost({ answers: ["Delete"] });
+    const { fetchFake, requests } = specStore([204, null]);
+
+    await make(host, fetchFake).remove(ID, "Waves");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("DELETE");
+    expect(requests[0].url).toBe(`${SPECS}/specs/notebook/${ID}`);
+    // The prompt says what is lost, because nothing here can undo it.
+    expect(log.warn[0]).toContain("cannot be undone");
+    expect(log.info[0]).toContain("Any copy in your workspace was kept");
+  });
+
+  it("leaves the record alone when the prompt is dismissed", async () => {
+    const { host } = fakeHost({ answers: [] });
+    const { fetchFake, requests } = specStore();
+
+    await make(host, fetchFake).remove(ID, "Waves");
+
+    expect(requests).toEqual([]);
+  });
+});
+
 describe("list", () => {
   it("splits the listing into mine and shared", async () => {
     const { host } = fakeHost({});

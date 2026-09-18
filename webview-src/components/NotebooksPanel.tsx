@@ -6,13 +6,16 @@ import type { NotebooksState, StoredNotebook } from "../types";
 
 function NotebookRow({
   notebook,
-  shareable,
+  owned,
 }: {
   notebook: StoredNotebook;
-  shareable: boolean;
+  /** Whether this is the user's own record, which is what the actions below need. */
+  owned: boolean;
 }): React.ReactElement {
   const open = (): void =>
     vscode.postMessage({ command: "notebook-open", id: notebook.id });
+  const act = (command: "notebook-share" | "notebook-rename" | "notebook-delete") =>
+    vscode.postMessage({ command, id: notebook.id, name: notebook.name });
   return (
     <div className="notebook-item" title={notebook.description ?? undefined}>
       <button className="notebook-item-name" onClick={open}>
@@ -21,22 +24,36 @@ function NotebookRow({
       <span className="notebook-item-modified">
         {formatModified(notebook.modified)}
       </span>
-      {/* Sharing needs admin access to the record, which only its owner has. */}
-      {shareable && (
-        <button
-          className="notebook-item-share"
-          title={`Share "${notebook.name}"`}
-          aria-label={`Share ${notebook.name}`}
-          onClick={() =>
-            vscode.postMessage({
-              command: "notebook-share",
-              id: notebook.id,
-              name: notebook.name,
-            })
-          }
-        >
-          Share
-        </button>
+      {/* Sharing, renaming and deleting all need admin access to the record, which only
+          its owner has. Each asks before it does anything, so none of them acts on a
+          stray click. */}
+      {owned && (
+        <>
+          <button
+            className="notebook-item-share"
+            title={`Share "${notebook.name}"`}
+            aria-label={`Share ${notebook.name}`}
+            onClick={() => act("notebook-share")}
+          >
+            Share
+          </button>
+          <button
+            className="notebook-item-share"
+            title={`Rename "${notebook.name}"`}
+            aria-label={`Rename ${notebook.name}`}
+            onClick={() => act("notebook-rename")}
+          >
+            Rename
+          </button>
+          <button
+            className="notebook-item-share"
+            title={`Delete "${notebook.name}" from Oceanum.io`}
+            aria-label={`Delete ${notebook.name}`}
+            onClick={() => act("notebook-delete")}
+          >
+            Delete
+          </button>
+        </>
       )}
     </div>
   );
@@ -46,12 +63,12 @@ function Section({
   title,
   empty,
   notebooks,
-  shareable,
+  owned,
 }: {
   title: string;
   empty: string;
   notebooks: StoredNotebook[];
-  shareable: boolean;
+  owned: boolean;
 }): React.ReactElement {
   return (
     <section>
@@ -60,11 +77,7 @@ function Section({
         <div className="oceanum-empty">{empty}</div>
       ) : (
         notebooks.map((notebook) => (
-          <NotebookRow
-            key={notebook.id}
-            notebook={notebook}
-            shareable={shareable}
-          />
+          <NotebookRow key={notebook.id} notebook={notebook} owned={owned} />
         ))
       )}
     </section>
@@ -127,13 +140,13 @@ export function NotebooksPanel({
             title="My notebooks"
             empty="Nothing saved yet. Open a notebook and choose Save current notebook."
             notebooks={notebooks.mine}
-            shareable={true}
+            owned={true}
           />
           <Section
             title="Shared with me"
             empty="Nothing has been shared with you."
             notebooks={notebooks.shared}
-            shareable={false}
+            owned={false}
           />
         </>
       )}

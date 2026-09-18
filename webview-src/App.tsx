@@ -37,6 +37,12 @@ export function App(): React.ReactElement {
     return () => window.removeEventListener("message", handler);
   }, []);
 
+  // The tab waits for a sign-in, as it does in oceanumlab. It also waits for the
+  // Datamesh token, which is the only credential the chat here can send: without one the
+  // tab would be there to be clicked and nothing behind it would work.
+  const signedIn = notebooks !== null && notebooks.state !== "signed-out";
+  const showChat = signedIn && hasToken;
+
   return (
     <div className="oceanum-sidebar">
       <header className="oceanum-header">
@@ -54,18 +60,21 @@ export function App(): React.ReactElement {
           >
             Datamesh
           </button>
-          <button
-            className={tab === "chat" ? "active" : ""}
-            onClick={() => setTab("chat")}
-          >
-            Oceanum AI
-          </button>
+          {showChat && (
+            <button
+              className={tab === "chat" ? "active" : ""}
+              onClick={() => setTab("chat")}
+            >
+              Oceanum AI
+            </button>
+          )}
         </div>
       </header>
 
       {/* The Datamesh token is what the Datamesh and AI tabs run on. Notebooks runs on
           the sign-in instead, and says so itself, so the prompt stays off that tab. */}
       {!hasToken && tab !== "notebooks" && <TokenPrompt />}
+
 
       {/* Both panes stay mounted; the inactive one is hidden via CSS so its
           local state (chat history, input, scroll) survives tab switches. */}
@@ -75,7 +84,7 @@ export function App(): React.ReactElement {
       <div className="oceanum-tab-pane" hidden={tab !== "workspace"}>
         <WorkspacePanel spec={workspaceSpec} />
       </div>
-      {hasToken && (
+      {showChat && (
         <div className="oceanum-tab-pane" hidden={tab !== "chat"}>
           <ChatPanel />
         </div>

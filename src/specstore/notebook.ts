@@ -60,6 +60,20 @@ export interface ISpecBody {
   spec: INotebookContent;
 }
 
+/**
+ * The fields a `PATCH /specs/notebook/{id}` may change. A field left out keeps its
+ * stored value, so a rename need not send the notebook back.
+ *
+ * The store refuses anything else outright rather than ignoring it, and refuses a patch
+ * that carries no field at all, so never send an empty one. `spec` is replaced whole:
+ * there is no way to change one key of a stored notebook.
+ */
+export interface ISpecPatch {
+  name?: string;
+  description?: string | null;
+  spec?: INotebookContent;
+}
+
 /** A spec store list entry (the list omits `spec`). */
 export interface ISpecSummary {
   id: string;
