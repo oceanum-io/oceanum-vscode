@@ -357,8 +357,15 @@ a:hover {
   cursor: pointer;
 }
 
-.notebooks-action:hover {
+/* Not when it is disabled: a button that lights up under the pointer reads as one that
+ * would do something. */
+.notebooks-action:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
+}
+
+.notebooks-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .notebooks-link {
