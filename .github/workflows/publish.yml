@@ -80,7 +80,12 @@ jobs:
       - name: Verify the Marketplace serves this version
         run: |
           version=$(node -p "require('./package.json').version")
-          for attempt in 1 2 3 4 5 6; do
+          # The Marketplace validates a new version before it serves it, which vsce
+          # itself calls "a few minutes". Six tries over three minutes called 0.6.0
+          # missing when it appeared about seven minutes after publishing, so the
+          # release run went red over a release that had worked. Twenty tries is ten
+          # minutes, and the step still says plainly when the version never arrives.
+          for attempt in $(seq 1 20); do
             if npx @vscode/vsce@3.9.2 show oceanum.oceanum --json |
               node -e "
                 let raw = '';
@@ -99,6 +104,11 @@ jobs:
           echo "::error::$version is not on the Marketplace"
           exit 1
 
+      # Another registry, reached from the build already made here, so how long the
+      # Marketplace took to serve the version has no bearing on it. Without this it is
+      # skipped whenever the step above gives up, which is how 0.6.0 reached the
+      # Marketplace and nowhere else.
       - name: Publish to Open VSX Registry
+        if: ${{ !cancelled() }}
         run: npx ovsx publish --pat ${{ secrets.OVSX_PAT }}
         continue-on-error: true  # Don't fail the workflow if Open VSX publish fails
